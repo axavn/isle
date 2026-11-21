@@ -9,8 +9,8 @@
     <Canvas x:Name="Body">
       <StackPanel x:Name="CollapsedRow" Orientation="Horizontal" Height="32"/>
       <Grid x:Name="ExpandedRoot" Width="520">
-        <Grid x:Name="Faces" Margin="10,34,10,8"/>
-        <ContentControl x:Name="CrumbSlot" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,5,14,0" IsTabStop="False"/>
+        <Grid x:Name="Faces" Margin="22,34,22,8"/>
+        <ContentControl x:Name="CrumbSlot" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,5,24,0" IsTabStop="False"/>
       </Grid>
     </Canvas>
   </Canvas>

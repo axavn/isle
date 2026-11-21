@@ -14,7 +14,7 @@ using IsleWin.Media;
 namespace IsleWin;
 
 /// The island, laid out and animated the way Isle (macOS) does it:
-/// - collapsed: a black notch-shaped pill sized to its content (art + equalizer │ marker + word), no centre gap;
+/// - collapsed: a black notch-shaped pill: art + equalizer │ 180 pt empty span │ marker + word;
 /// - open: a 520 × 146 panel (taller, up to 230, when a face needs it) with an empty 32 pt band on top;
 /// - springs for everything, width leading height on the way in, a taper as it collapses;
 /// - hover zones instead of enter/leave: opens when the pointer reaches the pill (or 14 pt below it),
@@ -33,7 +33,8 @@ public partial class IslandWindow : Window, IIslandHost
 
     // NotchMetrics / CollapsedSize / NotchWindowController constants
     const double OpenW = 520, OpenH = 146, MaxH = 230, CollapsedH = 32, BandH = 32;
-    const double Album = 22, Wave = 26, Dots = 16, Gap = 5, CutoutGap = 6, MinSide = 30, SidePad = 14;
+    const double Album = 22, Wave = 26, Dots = 16, Gap = 5, CutoutGap = 6, MinSide = 30, SidePad = 14 + 8; // padding + the 8 pt top flare the walls are inset by
+    const double Cutout = 140; // the empty span between the two clusters (Isle uses the notch width, 180 fallback)
     const double OpenLip = 14, StayTop = 10, StaySide = 16, StayBottom = 26;
     const double SweepSpeed = 900, SweepAspect = 2.5;
 
@@ -92,7 +93,7 @@ public partial class IslandWindow : Window, IIslandHost
         foreach (var f in new UIElement[] { _home, _music, _claudeFace }) { f.Visibility = Visibility.Collapsed; Faces.Children.Add(f); }
 
         _miniArtBox = new Border { Width = Album, Height = Album, Child = _miniArt, VerticalAlignment = VerticalAlignment.Center, Clip = new RectangleGeometry(new Rect(0, 0, Album, Album), 5, 5) };
-        CollapsedRow.Children.Add(_lead); CollapsedRow.Children.Add(_trail);
+        CollapsedRow.Children.Add(_lead); CollapsedRow.Children.Add(new Border { Width = Cutout }); CollapsedRow.Children.Add(_trail);
         _lead.Margin = new Thickness(0, 0, CutoutGap, 0); _trail.Margin = new Thickness(CutoutGap, 0, 0, 0);
         ExpandedRoot.Visibility = Visibility.Hidden;
 
@@ -194,7 +195,7 @@ public partial class IslandWindow : Window, IIslandHost
     void Retarget()
     {
         if (_shownFace is not FrameworkElement f) return;
-        f.Measure(new Size(OpenW - 20, double.PositiveInfinity));
+        f.Measure(new Size(OpenW - 44, double.PositiveInfinity));
         _openH = Math.Clamp(Math.Ceiling(f.DesiredSize.Height) + BandH + 2 + 8, OpenH, MaxH);
         if (_open) _h.Target = _openH;
     }
