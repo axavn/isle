@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>WinExe</OutputType><TargetFramework>net10.0-windows10.0.19041.0</TargetFramework><UseWPF>true</UseWPF><UseWindowsForms>true</UseWindowsForms><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings><LangVersion>latest</LangVersion><AssemblyName>IsleWin</AssemblyName><ApplicationManifest>app.manifest</ApplicationManifest></PropertyGroup>
+  <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+  <ItemGroup><PackageReference Include="NAudio.Wasapi" Version="2.2.1" /></ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\IsleWin.Core\IsleWin.Core.csproj" />
+    <ProjectReference Include="..\IsleWin.Claude\IsleWin.Claude.csproj" />
+    <ProjectReference Include="..\IsleCli\IsleCli.csproj" />
+  </ItemGroup>
+</Project>
