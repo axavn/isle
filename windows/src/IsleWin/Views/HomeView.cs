@@ -69,10 +69,10 @@ public sealed class HomeView : Grid
         _m1.Text = _media.HasTrack ? _media.Title : "Nothing playing";
         _m2.Text = _media.HasTrack ? _media.Artist : "";
 
-        _dots.State = _claude.State;
+        _dots.State = _claude.MarkerState;
         _dots.Primary = _claude.PalettePrimary; _dots.Secondary = _claude.PaletteSecondary; _dots.Accent = _claude.PaletteAccent;
         _c1.Text = _claude.HasSession ? _claude.CollapsedWord.TrimEnd('…') : "No session";
-        _c2.Text = _claude.HasSession ? _claude.SessionsLine : "";
+        _c2.Text = !_claude.HasSession ? "" : _claude.HasAgents ? _claude.AgentsLine : _claude.SessionsLine;
 
         // a tile that needs you is lit a little brighter
         if (!_musicTile.IsMouseOver) _musicTile.Background = IsleStyle.White(0.07);

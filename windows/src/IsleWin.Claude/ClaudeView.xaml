@@ -54,7 +54,7 @@
 
         <!-- the wing: reaches up into the band like the album art does -->
         <local:DotMatrix Width="114" Height="114" VerticalAlignment="Center"
-                         State="{Binding State}" Primary="{Binding PalettePrimary}" Secondary="{Binding PaletteSecondary}" Accent="{Binding PaletteAccent}">
+                         State="{Binding MarkerState}" Primary="{Binding PalettePrimary}" Secondary="{Binding PaletteSecondary}" Accent="{Binding PaletteAccent}">
             <local:DotMatrix.RenderTransform><TranslateTransform Y="-11"/></local:DotMatrix.RenderTransform>
         </local:DotMatrix>
 
@@ -102,6 +102,8 @@
             <!-- detail (body 12, 70%) -->
             <TextBlock Text="{Binding Detail}" FontSize="12" Foreground="{StaticResource Sec}" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="33" Margin="0,2,0,0"
                        Visibility="{Binding HasDetail, Converter={StaticResource B2V}}"/>
+            <TextBlock Text="{Binding AgentsLine}" FontSize="11" FontWeight="Medium" Foreground="#80FFFFFF" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"
+                       Visibility="{Binding HasAgents, Converter={StaticResource B2V}}"/>
 
             <!-- approval: the command in a card -->
             <Border Background="#12FFFFFF" CornerRadius="9" Padding="10,6" Margin="0,4,0,0" Visibility="{Binding ShowApproval, Converter={StaticResource B2V}}">

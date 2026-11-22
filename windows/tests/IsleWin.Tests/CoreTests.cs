@@ -34,7 +34,7 @@ public class InstallerTests
         var pre = m["hooks"]!["PreToolUse"]!.AsArray();
         Assert.Equal("AskUserQuestion", (string?)pre[1]!["matcher"]);
         Assert.Equal(60, (int)pre[1]!["hooks"]![0]!["timeout"]!);
-        Assert.Equal(12, IsleCount(m.ToJsonString()));
+        Assert.Equal(14, IsleCount(m.ToJsonString()));
     }
 
     [Fact]

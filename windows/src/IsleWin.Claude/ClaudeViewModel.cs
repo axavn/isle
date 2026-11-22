@@ -73,7 +73,7 @@ public sealed class ClaudeViewModel : INotifyPropertyChanged
     public string WorkingWord => _liveVerb ?? WorkingWords[_wordIndex];
 
     /// The one word on the collapsed island, as Isle words it.
-    public string CollapsedWord => State switch
+    public string CollapsedWord => Limit != null ? "Limit" : State switch
     {
         ClaudeState.Working => WorkingWord + "…",
         ClaudeState.NeedsApproval or ClaudeState.NeedsQuestion => _pending?.Kind == RequestKind.Permission ? "Approve" : "Question",
@@ -86,7 +86,7 @@ public sealed class ClaudeViewModel : INotifyPropertyChanged
     };
 
     /// Big word on the open face.
-    public string Headline => State switch
+    public string Headline => Limit != null ? Limit.Title : State switch
     {
         ClaudeState.Working => WorkingWord + "…",
         ClaudeState.Compacting => "Compacting…",
@@ -100,7 +100,7 @@ public sealed class ClaudeViewModel : INotifyPropertyChanged
     };
 
     /// The line under the headline.
-    public string Detail => State switch
+    public string Detail => Limit != null ? Limit.Detail : State switch
     {
         ClaudeState.Done or ClaudeState.WaitingInput => DoneSummary,
         ClaudeState.Working or ClaudeState.Compacting => ToolLine,
@@ -135,7 +135,7 @@ public sealed class ClaudeViewModel : INotifyPropertyChanged
     public bool HasQuestionHeader => !string.IsNullOrEmpty(QuestionHeader);
 
     /// The marker's colour per Isle's default marker designs (palette states use the cover's accent).
-    public Color MarkerColor(Color accent) => State switch
+    public Color MarkerColor(Color accent) => Limit != null ? Color.FromRgb(0xFF, 0x9F, 0x0A) : State switch
     {
         ClaudeState.NeedsApproval or ClaudeState.NeedsQuestion => Color.FromRgb(0x0A, 0x84, 0xFF),
         ClaudeState.Done => Color.FromRgb(0x34, 0xC7, 0x59),
@@ -157,6 +157,13 @@ public sealed class ClaudeViewModel : INotifyPropertyChanged
     string? _startProject;
     public string StatusLine { get; private set; } = "";
     public string DoneSummary { get; private set; } = "";
+    /// The claude.ai usage limit this session stopped on, if it did.
+    public UsageLimit? Limit { get; private set; }
+    /// The marker's design: a usage limit wears the error cross rather than Done's check.
+    public ClaudeState MarkerState => Limit != null ? ClaudeState.Failed : State;
+    /// "3 agents · Explore ×2, Plan" while the session has subagents running.
+    public string AgentsLine { get; private set; } = "";
+    public bool HasAgents => AgentsLine.Length > 0;
     public string OtherSessionsLine { get; private set; } = "";
     public IReadOnlyList<SessionItem> Sessions { get; private set; } = Array.Empty<SessionItem>();
     public Brush StateBrush => BrushFor(State);
@@ -310,12 +317,13 @@ public sealed class ClaudeViewModel : INotifyPropertyChanged
         Sessions = live.Select(s => new SessionItem(s.SessionId, s.Project ?? "?", s.State.ToString(), BrushFor(s.State), s.SessionId == _pinnedId)).ToList();
 
         StatusLine = BuildStatus(cur, now);
-        DoneSummary = "";
-        if (cur != null && (cur.State is ClaudeState.Done or ClaudeState.WaitingInput) && cur.TranscriptPath != null)
-        {
-            var t = TranscriptReader.LastAssistantText(cur.TranscriptPath)?.Trim() ?? "";
-            DoneSummary = t.Length > 240 ? t[..240].TrimEnd() + "…" : t;
-        }
+        DoneSummary = ""; Limit = null;
+        bool over = cur != null && cur.State is ClaudeState.Done or ClaudeState.WaitingInput or ClaudeState.Failed;
+        if (over && cur!.TranscriptPath != null) Limit = TranscriptReader.CurrentLimit(cur.TranscriptPath);
+        if (over && Limit == null && cur!.State != ClaudeState.Failed)
+            DoneSummary = ClaudeText.DoneLine(cur.LastMessage ?? (cur.TranscriptPath != null ? TranscriptReader.LastAssistantText(cur.TranscriptPath) : null));
+        // a session whose process is gone has no agents, whatever its record says
+        AgentsLine = rec != null ? ClaudeText.SubagentLine(cur?.Subagents) : "";
 
         bool attn = Attn;
         bool changed = attn != _needsAttention;

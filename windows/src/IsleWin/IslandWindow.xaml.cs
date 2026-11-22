@@ -72,6 +72,7 @@ public partial class IslandWindow : Window, IIslandHost
     bool _open, _keyboard, _hold;
     IslandFace? _place; // null = Home
     UIElement? _shownFace;
+    readonly Border _cutout = new() { Width = Cutout };
 
     public IslandWindow()
     {
@@ -81,6 +82,8 @@ public partial class IslandWindow : Window, IIslandHost
         {
             _hwnd = new WindowInteropHelper(this).Handle;
             SetWindowLong(_hwnd, GWL_EXSTYLE, GetWindowLong(_hwnd, GWL_EXSTYLE) | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW);
+            HwndSource.FromHwnd(_hwnd)?.AddHook(WndProc);
+            LoadPlacement();
         };
 
         Claude = new ClaudeViewModel(this);
@@ -90,10 +93,12 @@ public partial class IslandWindow : Window, IIslandHost
         _home.Picked += f => ShowPlace(f);
         _crumb.Home += () => ShowPlace(null);
         CrumbSlot.Content = _crumb;
-        foreach (var f in new UIElement[] { _home, _music, _claudeFace }) { f.Visibility = Visibility.Collapsed; Faces.Children.Add(f); }
+        foreach (var f in new FrameworkElement[] { _home, _music, _claudeFace }) { f.Visibility = Visibility.Hidden; f.RenderTransform = new TranslateTransform(); Faces.Children.Add(f); }
+        PreviewMouseDown += (_, e) => _claudeFace.ClickOut(e.OriginalSource as DependencyObject);
+        PreviewMouseLeftButtonDown += (_, e) => OnPress(e);
 
         _miniArtBox = new Border { Width = Album, Height = Album, Child = _miniArt, VerticalAlignment = VerticalAlignment.Center, Clip = new RectangleGeometry(new Rect(0, 0, Album, Album), 5, 5) };
-        CollapsedRow.Children.Add(_lead); CollapsedRow.Children.Add(new Border { Width = Cutout }); CollapsedRow.Children.Add(_trail);
+        CollapsedRow.Children.Add(_lead); CollapsedRow.Children.Add(_cutout); CollapsedRow.Children.Add(_trail);
         _lead.Margin = new Thickness(0, 0, CutoutGap, 0); _trail.Margin = new Thickness(CutoutGap, 0, 0, 0);
         ExpandedRoot.Visibility = Visibility.Hidden;
 
@@ -134,7 +139,7 @@ public partial class IslandWindow : Window, IIslandHost
     bool _wasAttention;
     void OnClaude()
     {
-        _miniDots.State = Claude.State;
+        _miniDots.State = Claude.MarkerState;
         _miniDots.Primary = Claude.PalettePrimary; _miniDots.Secondary = Claude.PaletteSecondary; _miniDots.Accent = Claude.PaletteAccent;
         _word.Text = Claude.CollapsedWord;
         _word.Foreground = Claude.MarkerBrush;
@@ -172,21 +177,14 @@ public partial class IslandWindow : Window, IIslandHost
     void ShowPlace(IslandFace? place, bool animate = true)
     {
         _place = place;
-        UIElement next = place switch { IslandFace.Music => _music, IslandFace.Claude => _claudeFace, _ => _home };
+        int i = IndexOf(place);
+        _shownFace = FaceAt(i);
         _crumb.Title = place switch { IslandFace.Music => "Music", IslandFace.Claude => "Claude", _ => "" };
         CrumbSlot.Visibility = place == null ? Visibility.Collapsed : Visibility.Visible;
-        if (next == _shownFace) { Retarget(); return; }
-        var prev = _shownFace; _shownFace = next;
-        next.Visibility = Visibility.Visible;
-        var d = TimeSpan.FromMilliseconds(animate ? 280 : 0);
-        var ease = new SineEase { EasingMode = EasingMode.EaseInOut }; // Isle's cross-dissolve: easeInOut 0.28 s
-        next.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, d) { EasingFunction = ease });
-        if (prev != null)
-        {
-            var a = new DoubleAnimation(0, d) { EasingFunction = ease };
-            a.Completed += (_, _) => { if (_shownFace != prev) prev.Visibility = Visibility.Collapsed; };
-            prev.BeginAnimation(OpacityProperty, a);
-        }
+        // faces sit side by side, Home │ Music │ Claude, and slide into place
+        _page.Use(PageSpring.R, PageSpring.D);
+        _page.Target = i;
+        if (!animate || !_open) _page.Snap(i);
         if (place == IslandFace.Music) _music.Tick();
         Retarget();
     }
@@ -208,7 +206,7 @@ public partial class IslandWindow : Window, IIslandHost
         if (Claude.NeedsAttention) ShowPlace(IslandFace.Claude, animate: false);
         Retarget();
         foreach (var s in new[] { _w, _h, _top, _bottom }) s.Use(IslandMotion.Open.R, IslandMotion.Open.D);
-        _w.Target = OpenW; _h.Target = _openH; _top.Target = IslandMotion.OpenCorners.Top; _bottom.Target = IslandMotion.OpenCorners.Bottom;
+        _w.Target = OpenW; _h.Target = _openH; _top.Target = OpenCornersNow.Top; _bottom.Target = OpenCornersNow.Bottom;
         _swellW.Target = _swellH.Target = _lean.Target = 0;
         _collapseOrigin = null;
         ExpandedRoot.Visibility = Visibility.Visible;
@@ -224,7 +222,7 @@ public partial class IslandWindow : Window, IIslandHost
         _h.Use(IslandMotion.CollapseHeight.R, IslandMotion.CollapseHeight.D);
         _top.Use(IslandMotion.CollapseCorners.R, IslandMotion.CollapseCorners.D);
         _bottom.Use(IslandMotion.CollapseCorners.R, IslandMotion.CollapseCorners.D);
-        _w.Target = _collapsedW; _h.Target = CollapsedH; _top.Target = IslandMotion.CollapsedCorners.Top; _bottom.Target = IslandMotion.CollapsedCorners.Bottom;
+        _w.Target = _collapsedW; _h.Target = CollapsedH; _top.Target = CollapsedCornersNow.Top; _bottom.Target = CollapsedCornersNow.Bottom;
     }
 
     // ---------------- per frame ----------------
@@ -232,15 +230,15 @@ public partial class IslandWindow : Window, IIslandHost
     {
         double t = _clock.Elapsed.TotalSeconds, dt = Math.Clamp(t - _lastT, 0, 0.05);
         _lastT = t;
-        Track(t);
-        foreach (var sp in new[] { _w, _h, _top, _bottom, _swellW, _swellH, _lean }) sp.Step(dt);
+        if (!CarryFrame(t)) Track(t);
+        foreach (var sp in new[] { _w, _h, _top, _bottom, _swellW, _swellH, _lean, _page }) sp.Step(dt);
         Draw();
     }
 
     Rect IslandRect()
     {
         double w = _w.Value + _swellW.Value, h = _h.Value + _swellH.Value;
-        return new Rect((Width - w) / 2 + _lean.Value, 0, w, h);
+        return new Rect((Width - w) / 2 + _lean.Value, _anchorBottom ? Height - h : 0, w, h);
     }
 
     void Track(double t)
@@ -261,13 +259,14 @@ public partial class IslandWindow : Window, IIslandHost
         if (!_open)
         {
             // open zone: the pill plus a 14 pt lip under it (and everything above it, to the screen edge)
-            bool inOpen = p.X >= r.Left && p.X <= r.Right && p.Y <= r.Bottom + OpenLip;
+            bool inOpen = p.X >= r.Left && p.X <= r.Right && (!_floating ? p.Y <= r.Bottom + OpenLip
+                : _anchorBottom ? p.Y >= r.Top - OpenLip && p.Y <= r.Bottom : p.Y >= r.Top && p.Y <= r.Bottom + OpenLip);
             if (inOpen && !(fast && sideways)) { Open(); return; }
             Proximity(p, r);
         }
         else
         {
-            var stay = new Rect(r.Left - StaySide, r.Top - StayTop, r.Width + StaySide * 2, r.Height + StayTop + StayBottom);
+            var stay = new Rect(r.Left - StaySide, r.Top - (_anchorBottom ? StayBottom : StayTop), r.Width + StaySide * 2, r.Height + StayTop + StayBottom);
             bool dragging = down && stay.Contains(_dragFrom); // a drag that started on the panel (the scrubber) keeps it open
             if (!stay.Contains(p) && !_keyboard && !_hold && !dragging) Close_();
         }
@@ -293,10 +292,20 @@ public partial class IslandWindow : Window, IIslandHost
     void Draw()
     {
         var r = IslandRect();
-        double pinch = !_open && _collapseOrigin is { } o ? IslandMotion.Taper(new Size(_w.Value, _h.Value), o, new Size(_collapsedW, CollapsedH)) : 0;
-        var geo = IslandMotion.Outline(r.Width, r.Height, _top.Value, _bottom.Value, pinch);
-        Canvas.SetLeft(Fill, r.Left); Fill.Data = geo;
-        Canvas.SetLeft(Body, r.Left); Body.Width = r.Width; Body.Height = r.Height; Body.Clip = geo;
+        Geometry geo;
+        if (_floating)
+        {
+            double rad = Math.Min(_bottom.Value, r.Height / 2);
+            geo = new RectangleGeometry(new Rect(0, 0, r.Width, r.Height), rad, rad); geo.Freeze();
+        }
+        else
+        {
+            double pinch = !_open && _collapseOrigin is { } o ? IslandMotion.Taper(new Size(_w.Value, _h.Value), o, new Size(_collapsedW, CollapsedH)) : 0;
+            geo = IslandMotion.Outline(r.Width, r.Height, _top.Value, _bottom.Value, pinch);
+        }
+        Canvas.SetLeft(Fill, r.Left); Canvas.SetTop(Fill, r.Top); Fill.Data = geo;
+        Canvas.SetLeft(Body, r.Left); Canvas.SetTop(Body, r.Top); Body.Width = r.Width; Body.Height = r.Height; Body.Clip = geo;
+        LayoutPages();
 
         // content: the open face fades in only past 65% of the way open; the pill's content is gone by 35%
         double progress = Math.Clamp((_w.Value - _collapsedW) / Math.Max(1, OpenW - _collapsedW), 0, 1.2);

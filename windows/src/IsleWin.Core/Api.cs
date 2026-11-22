@@ -44,7 +44,12 @@ public sealed record SessionStatus(
     string? Tool,
     string? ToolTarget,
     string? ErrorType,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    IReadOnlyList<Subagent>? Subagents = null,
+    string? LastMessage = null);
+
+/// A subagent the session has running, from `SubagentStart` until its `SubagentStop`.
+public sealed record Subagent(string Id, string Type);
 
 /// One of Claude Code's own `~/.claude/sessions/<pid>.json` records.
 public sealed record RegistryRecord(int Pid, string? SessionId, string? Cwd, string? Status, string? ProcStart, string? Kind, string? Name);

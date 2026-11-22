@@ -1,4 +1,6 @@
+using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using System.Windows.Input;
 
 namespace IsleWin.Claude;
@@ -11,7 +13,23 @@ public partial class ClaudeView : UserControl
     void OnFocus(object s, KeyboardFocusChangedEventArgs e) => Vm?.KeyboardFocus(true);
     void OnLostFocus(object s, KeyboardFocusChangedEventArgs e) => Vm?.KeyboardFocus(false);
     void OnMouseDown(object s, MouseButtonEventArgs e) => Vm?.KeyboardFocus(true);
-    void OnKey(object s, KeyEventArgs e) { if (e.Key == Key.Enter && Keyboard.Modifiers == ModifierKeys.None) { e.Handled = true; Send(); } }
+    void OnKey(object s, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && Keyboard.Modifiers == ModifierKeys.None) { e.Handled = true; Send(); }
+        else if (e.Key == Key.Escape) { e.Handled = true; Release(); }
+    }
+
+    /// Isle's click-out: a press on the island outside the reply field lets the field go, as Esc does.
+    /// The draft stays in the box; the keyboard goes back to the window it came from.
+    public void ClickOut(DependencyObject? pressed)
+    {
+        if (!Reply.IsKeyboardFocused) return;
+        for (var d = pressed; d != null; d = d is Visual or System.Windows.Media.Media3D.Visual3D ? VisualTreeHelper.GetParent(d) : LogicalTreeHelper.GetParent(d))
+            if (d == Reply) return;
+        Release();
+    }
+
+    void Release() { Keyboard.ClearFocus(); Vm?.KeyboardFocus(false); }
     void OnSend(object s, System.Windows.RoutedEventArgs e) => Send();
     // Don't drop focus here: it raced the jump to the terminal. SendReplyAsync releases it after a paste,
     // and on a failed/confirm send the box stays focused so you can just press Enter again.

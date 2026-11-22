@@ -64,7 +64,9 @@ public static class StatusStore
     {
         ["session_id"] = s.SessionId, ["state"] = J.StateName(s.State), ["project"] = s.Project, ["cwd"] = s.Cwd,
         ["transcript_path"] = s.TranscriptPath, ["tool"] = s.Tool, ["tool_target"] = s.ToolTarget,
-        ["error_type"] = s.ErrorType, ["updated_at"] = s.UpdatedAt.UtcDateTime.ToString("o")
+        ["error_type"] = s.ErrorType, ["updated_at"] = s.UpdatedAt.UtcDateTime.ToString("o"),
+        ["subagents"] = s.Subagents is { Count: > 0 } a ? new JsonArray(a.Select(x => (JsonNode)new JsonObject { ["id"] = x.Id, ["type"] = x.Type }).ToArray()) : null,
+        ["last_message"] = s.LastMessage,
     }.ToJsonString(J.Indented);
 
     public static SessionStatus? Parse(string json)
@@ -75,7 +77,9 @@ public static class StatusStore
             if (n is not JsonObject || J.Str(n, "session_id") is not { Length: > 0 } id) return null;
             var at = DateTimeOffset.TryParse(J.Str(n, "updated_at"), null, System.Globalization.DateTimeStyles.AssumeUniversal, out var t) ? t : DateTimeOffset.UnixEpoch;
             return new SessionStatus(id, J.ParseState(J.Str(n, "state")) ?? ClaudeState.Idle, J.Str(n, "project"), J.Str(n, "cwd"),
-                J.Str(n, "transcript_path"), J.Str(n, "tool"), J.Str(n, "tool_target"), J.Str(n, "error_type"), at);
+                J.Str(n, "transcript_path"), J.Str(n, "tool"), J.Str(n, "tool_target"), J.Str(n, "error_type"), at,
+                n["subagents"] is JsonArray arr ? arr.Select(x => new Subagent(J.Str(x, "id") ?? "", J.Str(x, "type") ?? "agent")).ToList() : null,
+                J.Str(n, "last_message"));
         }
         catch { return null; }
     }
@@ -287,6 +291,8 @@ public static class HookInstaller
         Add("Stop", "set-state done");
         Add("StopFailure", "fail");
         Add("PreCompact", "set-state compacting");
+        Add("SubagentStart", "subagent-start");
+        Add("SubagentStop", "subagent-stop");
         Add("SessionEnd", "end");
         root["hooks"] = hooks;
         return root.ToJsonString(J.Indented);
@@ -370,6 +376,20 @@ public static class TranscriptReader
         return last;
     }
 
+    /// The usage limit the session is stopped on, if its latest assistant message is Claude Code's limit
+    /// notice; with the "continue automatically at" time if Claude Code set one after it.
+    public static UsageLimit? CurrentLimit(string transcriptPath, int maxBytes = 65536)
+    {
+        UsageLimit? limit = null;
+        foreach (var n in Tail(transcriptPath, maxBytes))
+        {
+            var role = Role(n);
+            if (role == "assistant" && Text(n) is { Length: > 0 } t) limit = ClaudeText.ParseLimit(t);
+            else if (limit != null && J.Str(n, "type") == "system" && ClaudeText.ParseContinue(J.Str(n, "content")) is { } at) limit = limit with { ContinuesAt = at };
+        }
+        return limit;
+    }
+
     public static bool ContainsUserText(string transcriptPath, string text, int maxBytes = 65536) =>
         Tail(transcriptPath, maxBytes).Any(n => Role(n) == "user" && Text(n).Contains(text, StringComparison.Ordinal));
 }
@@ -397,13 +417,17 @@ public static class HookHandler
         var tool = J.Str(n, "tool_name");
         var isPre = J.Str(n, "hook_event_name") == "PreToolUse";
 
-        void Write(ClaudeState state, string? t = null, string? target = null, string? err = null)
+        // Subagents outlive state changes (a background agent outlives its turn); the last message only means
+        // something while the turn is over, so any other write clears it.
+        void Write(ClaudeState state, string? t = null, string? target = null, string? err = null,
+                   IReadOnlyList<Subagent>? subs = null, string? lastMessage = null, DateTimeOffset? at = null)
         {
             var cwd = J.Str(n, "cwd") ?? prev?.Cwd;
             var project = string.IsNullOrEmpty(cwd) ? prev?.Project : Path.GetFileName(cwd.TrimEnd('\\', '/'));
             if (string.IsNullOrEmpty(project)) project = prev?.Project;
             AtomicFile.WriteAllText(file, StatusStore.Serialize(new SessionStatus(id, state, project, cwd,
-                J.Str(n, "transcript_path") ?? prev?.TranscriptPath, t, target, err, DateTimeOffset.UtcNow)));
+                J.Str(n, "transcript_path") ?? prev?.TranscriptPath, t, target, err, at ?? DateTimeOffset.UtcNow,
+                subs ?? prev?.Subagents, lastMessage)));
         }
 
         switch (verb)
@@ -413,8 +437,20 @@ public static class HookHandler
                 // ask-question runs in parallel for AskUserQuestion and must not be overwritten.
                 if (st == ClaudeState.Working && isPre && tool == "AskUserQuestion") st = ClaudeState.NeedsQuestion;
                 if (st == ClaudeState.Working && isPre && tool != null) Write(st, tool, J.Target(n["tool_input"], 120));
+                else if (st == ClaudeState.Done) Write(st, lastMessage: J.Str(n, "last_assistant_message") is { } m ? J.Cut(m, 300) : null);
                 else Write(st);
                 return "";
+            case "subagent-start":
+            case "subagent-stop":
+            {
+                var list = (prev?.Subagents ?? Array.Empty<Subagent>()).ToList();
+                var aid = J.Str(n, "agent_id") ?? "";
+                if (verb == "subagent-start") { if (!list.Any(a => a.Id == aid)) list.Add(new Subagent(aid, J.Str(n, "agent_type") is { Length: > 0 } ty ? ty : "agent")); }
+                else list.RemoveAll(a => a.Id == aid);
+                // the session's own state, tool and time are left as they were: this only edits the list
+                Write(prev?.State ?? ClaudeState.Working, prev?.Tool, prev?.ToolTarget, prev?.ErrorType, list, prev?.LastMessage, prev?.UpdatedAt);
+                return "";
+            }
             case "notify":
                 var nt = J.Str(n, "notification_type");
                 var ns = nt == "permission_prompt" ? ClaudeState.NeedsApproval : nt == "idle_prompt" ? ClaudeState.WaitingInput : (ClaudeState?)null;
