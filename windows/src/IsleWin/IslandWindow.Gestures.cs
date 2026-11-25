@@ -35,8 +35,80 @@ public partial class IslandWindow
     static IslandFace? PlaceAt(int i) => i switch { 1 => IslandFace.Music, 2 => IslandFace.Claude, _ => null };
     FrameworkElement FaceAt(int i) => i switch { 1 => _music, 2 => _claudeFace, _ => _home };
 
+    // ---- a mouse: the back / forward buttons, Alt+← / Alt+→ (Isle's ⌥← ⌥→), and a sideways drag ----
+    const int WM_HOTKEY = 0x0312, HotPrev = 0x1517, HotNext = 0x1518, MOD_ALT = 0x1, MOD_NOREPEAT = 0x4000, VK_LEFT = 0x25, VK_RIGHT = 0x27;
+    const double DragStart = 8, DragAspect = 1.5;
+    [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr h, int id, int mods, int vk);
+    [DllImport("user32.dll")] static extern bool UnregisterHotKey(IntPtr h, int id);
+    Point? _dragAt; bool _dragSwiping; double _dragLastX, _dragLastT;
+
+    /// One face back or forward, as the mouse's side buttons and the arrow keys step.
+    void Step(int by)
+    {
+        int at = IndexOf(_place), to = Math.Clamp(at + by, 0, 2);
+        if (to != at) ShowPlace(PlaceAt(to));
+    }
+
+    /// Alt+← / Alt+→ step between faces while the island is open, and only then (they're the keys a
+    /// browser goes back with, so they're taken only for as long as the island is on show).
+    void FaceKeys(bool on)
+    {
+        if (_hwnd == IntPtr.Zero) return;
+        if (on) { RegisterHotKey(_hwnd, HotPrev, MOD_ALT | MOD_NOREPEAT, VK_LEFT); RegisterHotKey(_hwnd, HotNext, MOD_ALT | MOD_NOREPEAT, VK_RIGHT); }
+        else { UnregisterHotKey(_hwnd, HotPrev); UnregisterHotKey(_hwnd, HotNext); }
+    }
+
+    /// The mouse's back button (XButton1) is the face before, forward (XButton2) the one after.
+    void OnSideButton(MouseButtonEventArgs e)
+    {
+        if (!_open || _carrying || e.ChangedButton is not (MouseButton.XButton1 or MouseButton.XButton2)) return;
+        Step(e.ChangedButton == MouseButton.XButton1 ? -1 : 1);
+        e.Handled = true;
+    }
+
+    /// Runs each frame while a press is down: a press that moves sideways before the hold is a drag that pages,
+    /// the face following the pointer. Not one a control took (a button or the scrubber holds the mouse).
+    void DragSwipeFrame(double t, bool down)
+    {
+        if (_dragAt is not { } at) return;
+        var c = CursorDip();
+        if (!_dragSwiping)
+        {
+            if (!down || _carrying || !_open) { _dragAt = null; return; }
+            double dx = c.X - at.X, dy = c.Y - at.Y;
+            if (Math.Sqrt(dx * dx + dy * dy) < DragStart) return;
+            if (Math.Abs(dx) < Math.Abs(dy) * DragAspect || Mouse.Captured != null) { _dragAt = null; return; }
+            _dragSwiping = true; _pressAt = null;
+            _swiping = true; _swipeBase = IndexOf(_place); _swipeVel = 0;
+            _dragLastX = c.X; _dragLastT = t;
+            CaptureMouse(); // the release is the drag's: the tile it started on doesn't take it as a click
+        }
+        if (!down)
+        {
+            _dragAt = null; _dragSwiping = false;
+            ReleaseMouseCapture();
+            EndSwipe();
+            return;
+        }
+        _swipeOffset = Math.Clamp(-(c.X - at.X) / OpenW, -1, 1); // drag left = the next face
+        double dtt = Math.Max(1e-3, t - _dragLastT);
+        _swipeVel = _swipeVel * 0.6 + (-(c.X - _dragLastX) / OpenW / dtt) * 0.4;
+        _dragLastX = c.X; _dragLastT = t;
+        double target = _swipeBase + _swipeOffset;
+        if (target < 0) target = -Math.Min(0.12, -target * 0.25); // rubber band past the ends
+        else if (target > 2) target = 2 + Math.Min(0.12, (target - 2) * 0.25);
+        _page.Use(FollowSpring.R, FollowSpring.D);
+        _page.Target = target;
+    }
+
     IntPtr WndProc(IntPtr hwnd, int msg, IntPtr w, IntPtr l, ref bool handled)
     {
+        if (msg == WM_HOTKEY && w.ToInt32() is HotPrev or HotNext)
+        {
+            if (_open && !_carrying) Step(w.ToInt32() == HotPrev ? -1 : 1);
+            handled = true;
+            return IntPtr.Zero;
+        }
         if (msg != WM_MOUSEHWHEEL && msg != WM_MOUSEWHEEL) return IntPtr.Zero;
         if (!_open || _carrying) return IntPtr.Zero;
         int delta = (short)((w.ToInt64() >> 16) & 0xFFFF);
@@ -133,6 +205,7 @@ public partial class IslandWindow
     void OnPress(MouseButtonEventArgs e)
     {
         if (!_open || _carrying) return;
+        _dragAt = CursorDip(); _dragSwiping = false; // any press may turn into a sideways drag (DragSwipeFrame)
         for (var d = e.OriginalSource as DependencyObject; d != null && d != this; d = d is Visual ? VisualTreeHelper.GetParent(d) : LogicalTreeHelper.GetParent(d))
         {
             if (d is ButtonBase or TextBoxBase or Thumb or ScrollBar) return;
@@ -145,6 +218,7 @@ public partial class IslandWindow
     bool CarryFrame(double t)
     {
         bool down = (GetAsyncKeyState(0x01) & 0x8000) != 0;
+        DragSwipeFrame(t, down);
         if (_pressAt is { } at && !_carrying)
         {
             var c = CursorDip();
@@ -156,26 +230,34 @@ public partial class IslandWindow
         if (!down) { EndCarry(p); return false; }
         MoveTo(p, bottom: false);
         UpdateGhost(p);
+        UpdateTaskbarGhost(p);
         return true;
     }
 
     void BeginCarry(Point c)
     {
-        _pressAt = null; _carrying = true;
+        _pressAt = null;
+        LeaveTaskbar();
+        _carrying = true;
+        CaptureMouse(); // the drag belongs to the island: nothing underneath gets it (no stray text selection)
         if (_keyboard) RequestKeyboard(false);
         _hold = false;
         Close_();
         SetFloating(true, bottom: false);
         MoveTo(c, bottom: false);
         ShowGhost();
+        ShowTaskbarGhost();
     }
 
     void EndCarry(Point p)
     {
         _carrying = false;
-        _ghost?.Hide();
+        ReleaseMouseCapture();
+        _ghost?.Hide(); _tbGhost?.Hide();
+        if (NearTaskbarSlot(p)) { PlaceOnTaskbar(); return; }
+        WatchTaskbar(false);
         if ((p - DockCenter).Length < DockReach) Dock();
-        else { SetFloating(true, LowerHalf(p)); MoveTo(p, _anchorBottom); }
+        else { p = KeepOnScreen(p); SetFloating(true, LowerHalf(p)); MoveTo(p, _anchorBottom); }
         SavePlacement(p);
     }
 
@@ -202,6 +284,28 @@ public partial class IslandWindow
     {
         Left = c.X - Width / 2;
         Top = bottom ? c.Y + CollapsedH / 2 - Height : c.Y - CollapsedH / 2;
+    }
+
+    /// The work area (screen minus taskbar) of the monitor nearest `dip`, in DIPs.
+    Rect WorkArea(Point dip)
+    {
+        var m = PresentationSource.FromVisual(this)?.CompositionTarget?.TransformToDevice ?? Matrix.Identity;
+        var dev = m.Transform(dip);
+        var mon = MonitorFromPoint(new POINT { X = (int)dev.X, Y = (int)dev.Y }, 2 /* nearest */);
+        var mi = new MONITORINFO { Size = Marshal.SizeOf<MONITORINFO>() };
+        if (!GetMonitorInfo(mon, ref mi)) return SystemParameters.WorkArea;
+        m.Invert();
+        return new Rect(m.Transform(new Point(mi.Work.L, mi.Work.T)), m.Transform(new Point(mi.Work.R, mi.Work.B)));
+    }
+
+    /// A dropped pill stays whole inside the work area — never under the taskbar or off an edge.
+    Point KeepOnScreen(Point c)
+    {
+        const double margin = 8;
+        var wa = WorkArea(c);
+        double hw = _collapsedW / 2, hh = CollapsedH / 2;
+        return new Point(Math.Clamp(c.X, wa.Left + hw + margin, Math.Max(wa.Left + hw + margin, wa.Right - hw - margin)),
+                         Math.Clamp(c.Y, wa.Top + hh + margin, Math.Max(wa.Top + hh + margin, wa.Bottom - hh - margin)));
     }
 
     bool LowerHalf(Point dip)
@@ -258,7 +362,7 @@ public partial class IslandWindow
         try
         {
             Directory.CreateDirectory(IslePaths.Default.Root);
-            AtomicFile.WriteAllText(PlacementFile, new JsonObject { ["floating"] = _floating, ["x"] = p.X, ["y"] = p.Y }.ToJsonString());
+            AtomicFile.WriteAllText(PlacementFile, new JsonObject { ["floating"] = _floating && !_taskbar, ["taskbar"] = _taskbar, ["x"] = p.X, ["y"] = p.Y }.ToJsonString());
         }
         catch { }
     }
@@ -268,10 +372,13 @@ public partial class IslandWindow
         try
         {
             if (!File.Exists(PlacementFile) || JsonNode.Parse(File.ReadAllText(PlacementFile)) is not JsonObject o) return;
+            if (o["taskbar"]?.GetValue<bool>() == true) { PlaceOnTaskbar(); return; }
             if (o["floating"]?.GetValue<bool>() != true) return;
             var p = new Point(o["x"]!.GetValue<double>(), o["y"]!.GetValue<double>());
             var vs = new Rect(SystemParameters.VirtualScreenLeft, SystemParameters.VirtualScreenTop, SystemParameters.VirtualScreenWidth, SystemParameters.VirtualScreenHeight);
             if (!vs.Contains(p)) return; // that screen is gone: stay docked
+            SetFloating(true, false);
+            p = KeepOnScreen(p);
             SetFloating(true, LowerHalf(p));
             MoveTo(p, _anchorBottom);
             _top.Snap(CollapsedCornersNow.Top); _bottom.Snap(CollapsedCornersNow.Bottom);

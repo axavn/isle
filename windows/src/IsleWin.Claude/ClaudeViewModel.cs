@@ -17,6 +17,9 @@ public sealed class RelayCommand : ICommand
     public void Execute(object? p) => _run(p);
 }
 
+/// One option row of the question on screen.
+public sealed record OptionItem(string Label, string? Description, bool Picked, bool Multi);
+
 public sealed record SessionItem(string Id, string Project, string StateText, Brush Brush, bool Pinned);
 
 public sealed class ClaudeViewModel : INotifyPropertyChanged
@@ -33,8 +36,12 @@ public sealed class ClaudeViewModel : INotifyPropertyChanged
     SessionStatus? _cur;
     PendingRequest? _pending;
     int _qIndex;
-    readonly Dictionary<string, string> _answers = new();
-    IReadOnlyList<string> _options = Array.Empty<string>();
+    readonly List<HashSet<string>> _picks = new();
+    readonly Dictionary<int, string> _typed = new();
+    IReadOnlyList<OptionItem> _choices = Array.Empty<OptionItem>();
+    bool _typing, _busy;
+    string _answerText = "";
+    bool _isDesktop;
     bool _needsAttention, _hasSession;
     int _livePid;
     string? _liveName;
@@ -44,8 +51,13 @@ public sealed class ClaudeViewModel : INotifyPropertyChanged
         _host = host;
         Allow = new RelayCommand(_ => Respond(ResponseBuilder.Allow()));
         Deny = new RelayCommand(_ => Respond(ResponseBuilder.Deny("Denied from the island")));
-        Answer = new RelayCommand(o => AnswerQuestion(o as string));
-        Jump = new RelayCommand(_ => TerminalBridge.Jump(TerminalBridge.FindHostWindow(_livePid)));
+        Answer = new RelayCommand(o => PickOption(o as string));
+        Advance = new RelayCommand(_ => AdvanceQuestion());
+        PreviousQuestion = new RelayCommand(_ => { if (_qIndex > 0 && !_busy) { _qIndex--; _typing = false; RebuildChoices(); Notify(); } });
+        TypeSomething = new RelayCommand(_ => { _typing = !_typing; Notify(); });
+        SubmitTyped = new RelayCommand(_ => SubmitTypedAnswer());
+        AnswerInTerminal = new RelayCommand(_ => { if (_pending is { Kind: RequestKind.Question }) Respond(ResponseBuilder.Terminal()); DoJump(); });
+        Jump = new RelayCommand(_ => DoJump());
         SendReply = new RelayCommand(_ => _ = SendReplyAsync());
         Pin = new RelayCommand(o => { if (o is SessionItem s) { _pinnedId = _pinnedId == s.Id ? null : s.Id; _currentId = s.Id; Refresh(); } });
         // "+2 >": step to the next live session and stay on it
@@ -131,7 +143,27 @@ public sealed class ClaudeViewModel : INotifyPropertyChanged
     }
     public Brush MarkerBrush { get { var b = new SolidColorBrush(MarkerColor(PaletteAccent)); b.Freeze(); return b; } }
 
-    public IReadOnlyList<QuestionOption> QuestionChoices => CurrentQuestion?.Options ?? (IReadOnlyList<QuestionOption>)Array.Empty<QuestionOption>();
+    public IReadOnlyList<OptionItem> QuestionChoices => _choices;
+    public bool IsMultiSelect => CurrentQuestion?.MultiSelect == true;
+    /// "2 of 3" for a multi-question ask.
+    public string QuestionStep => _pending is { Kind: RequestKind.Question } p && p.Questions.Count > 1 ? $"{_qIndex + 1} of {p.Questions.Count}" : "";
+    public bool HasQuestionStep => QuestionStep.Length > 0;
+    public bool CanGoBack => _qIndex > 0 && HasQuestionStep;
+    bool IsLastQuestion => _pending == null || _qIndex + 1 >= _pending.Questions.Count;
+    public string AdvanceLabel => IsLastQuestion ? "Done" : "Next";
+    /// Single-select answers on a click; a multi-select needs Next / Done.
+    public bool ShowAdvance => IsMultiSelect && !_typing;
+    public bool CanAdvance => _qIndex < _picks.Count && _picks[_qIndex].Count > 0;
+    public bool ShowTypeBox => _typing;
+    public bool ShowQuestionPills => !_typing;
+    public string TypeSendLabel => IsLastQuestion ? "Send" : "Next";
+    public string AnswerText { get => _answerText; set => _answerText = value; }
+    /// A desktop-app session has no console: no reply box, and Jump raises the app instead of a terminal.
+    public bool IsDesktop => _isDesktop;
+    public bool CanReply => !_isDesktop;
+    public string JumpLabel => _isDesktop ? "Claude" : "Terminal";
+    public string TerminalAnswerLabel => _isDesktop ? "Answer in app" : "Answer in terminal";
+    void DoJump() => TerminalBridge.Jump(_isDesktop ? TerminalBridge.FindDesktopWindow(_livePid) : TerminalBridge.FindHostWindow(_livePid));
     public bool HasQuestionHeader => !string.IsNullOrEmpty(QuestionHeader);
 
     /// The marker's colour per Isle's default marker designs (palette states use the cover's accent).
@@ -177,7 +209,7 @@ public sealed class ClaudeViewModel : INotifyPropertyChanged
     // While Claude is thinking, mirror the terminal's spinner word into the pill.
     void PollVerb()
     {
-        if (!IsThinking || _livePid == 0) { if (_liveVerb != null) { _liveVerb = null; Notify(); } return; }
+        if (!IsThinking || _livePid == 0 || _isDesktop) { if (_liveVerb != null) { _liveVerb = null; Notify(); } return; }
         if (_verbBusy) return;
         _verbBusy = true;
         int pid = _livePid;
@@ -194,7 +226,6 @@ public sealed class ClaudeViewModel : INotifyPropertyChanged
     public string? PendingSummary => _pending?.ToolSummary;
     public string QuestionText => CurrentQuestion?.Text ?? "";
     public string? QuestionHeader => CurrentQuestion?.Header;
-    public IReadOnlyList<string> QuestionOptions => _options;
     Question? CurrentQuestion => _pending is { Kind: RequestKind.Question } p && _qIndex < p.Questions.Count ? p.Questions[_qIndex] : null;
 
     bool Attn => State is ClaudeState.NeedsApproval or ClaudeState.NeedsQuestion;
@@ -217,6 +248,11 @@ public sealed class ClaudeViewModel : INotifyPropertyChanged
     public ICommand Allow { get; }
     public ICommand Deny { get; }
     public ICommand Answer { get; }
+    public ICommand Advance { get; }
+    public ICommand PreviousQuestion { get; }
+    public ICommand TypeSomething { get; }
+    public ICommand SubmitTyped { get; }
+    public ICommand AnswerInTerminal { get; }
     public ICommand Jump { get; }
     public ICommand SendReply { get; }
     public ICommand Pin { get; }
@@ -278,8 +314,8 @@ public sealed class ClaudeViewModel : INotifyPropertyChanged
     {
         var now = DateTimeOffset.UtcNow;
         var records = RegistryStore.ReadAll(_paths);
-        // Desktop-app sessions have no terminal to type into, so the pill only follows CLI sessions.
-        var alive = records.Where(r => RegistryStore.IsAlive(r) && !TerminalBridge.IsDesktopSession(_paths.ClaudeSessions, r.Pid)).ToList();
+        // Desktop-app sessions are followed too (hooks and answers work the same); they just have no console to type into.
+        var alive = records.Where(r => RegistryStore.IsAlive(r)).ToList();
         // Hook files carry the detail; Claude Code's own records fill in live sessions with none.
         var hooked = StatusStore.ReadAll(_paths);
         var hookedIds = hooked.Select(s => s.SessionId).ToHashSet();
@@ -303,13 +339,18 @@ public sealed class ClaudeViewModel : INotifyPropertyChanged
 
         var rec = cur == null ? null : alive.FirstOrDefault(r => r.SessionId == cur.SessionId);
         _livePid = rec?.Pid ?? 0; _liveName = rec?.Name;
+        _isDesktop = rec != null && TerminalBridge.IsDesktopSession(_paths.ClaudeSessions, rec.Pid);
         _startProject = string.IsNullOrEmpty(rec?.Cwd) ? null : Path.GetFileName(rec.Cwd.TrimEnd('\\', '/'));
         _hasSession = live.Count > 0;
 
         // question progress resets when the request changes
         var key = _pending?.RequestId;
-        if (key != _lastQKey) { _lastQKey = key; _qIndex = 0; _answers.Clear(); }
-        _options = CurrentQuestion?.Options.Select(o => o.Label).ToList() ?? (IReadOnlyList<string>)Array.Empty<string>();
+        if (key != _lastQKey)
+        {
+            _lastQKey = key; _qIndex = 0; _typing = false; _busy = false; _answerText = ""; _typed.Clear(); _picks.Clear();
+            if (_pending is { Kind: RequestKind.Question } qp) foreach (var _ in qp.Questions) _picks.Add(new());
+        }
+        RebuildChoices();
 
         var others = live.Where(s => s.SessionId != cur?.SessionId).ToList();
         int working = others.Count(s => s.State is ClaudeState.Working or ClaudeState.Compacting);
@@ -363,26 +404,48 @@ public sealed class ClaudeViewModel : INotifyPropertyChanged
     void Respond(string json)
     {
         if (_pending == null) return;
-        _handledRequest = _pending.RequestId;
+        _handledRequest = _pending.RequestId; _busy = false;
         try { RequestStore.WriteResponse(_paths, _pending.RequestId, json); } catch { }
         Notify();
     }
 
-    void AnswerQuestion(string? label)
+    void RebuildChoices() =>
+        _choices = CurrentQuestion is { } q && _qIndex < _picks.Count
+            ? q.Options.Select(o => new OptionItem(o.Label, o.Description, _picks[_qIndex].Contains(o.Label), q.MultiSelect)).ToList()
+            : Array.Empty<OptionItem>();
+
+    /// A click on an option: single-select answers (and moves on); multi-select toggles.
+    void PickOption(string? label)
     {
-        if (_pending is not { Kind: RequestKind.Question } p || label == null || CurrentQuestion is not { } q) return;
-        _answers[q.Text] = label;
-        _qIndex++;
-        if (_qIndex >= p.Questions.Count)
-        {
-            var input = RequestStore.ReadToolInput(p) ?? new System.Text.Json.Nodes.JsonObject();
-            Respond(ResponseBuilder.Answers(input, new Dictionary<string, string>(_answers)));
-        }
-        else
-        {
-            _options = CurrentQuestion?.Options.Select(o => o.Label).ToList() ?? (IReadOnlyList<string>)Array.Empty<string>();
-            Notify();
-        }
+        if (_pending is not { Kind: RequestKind.Question } || label == null || CurrentQuestion is not { } q || _busy || _qIndex >= _picks.Count) return;
+        _typed.Remove(_qIndex); _typing = false;
+        var set = _picks[_qIndex];
+        if (q.MultiSelect) { if (!set.Remove(label)) set.Add(label); RebuildChoices(); Notify(); }
+        else { set.Clear(); set.Add(label); AdvanceQuestion(); }
+    }
+
+    void SubmitTypedAnswer()
+    {
+        var text = _answerText.Trim();
+        if (text.Length == 0 || _pending is not { Kind: RequestKind.Question } || _busy || _qIndex >= _picks.Count) return;
+        _typed[_qIndex] = text; _picks[_qIndex].Clear();
+        _answerText = ""; _typing = false; _host.RequestKeyboard(false);
+        AdvanceQuestion();
+    }
+
+    /// Next / Done: move past the current question once it has an answer; after the last, send them all.
+    void AdvanceQuestion()
+    {
+        if (_pending is not { Kind: RequestKind.Question } p || _busy || _qIndex >= _picks.Count) return;
+        if (_picks[_qIndex].Count == 0 && !_typed.ContainsKey(_qIndex)) return;
+        if (_qIndex + 1 < p.Questions.Count) { _qIndex++; _typing = false; RebuildChoices(); Notify(); return; }
+        // Keyed by question text; typed text goes in as written, picks in the order offered.
+        var answers = new Dictionary<string, string>();
+        for (int i = 0; i < p.Questions.Count && i < _picks.Count; i++)
+            answers[p.Questions[i].Text] = _typed.TryGetValue(i, out var t) ? t : ResponseBuilder.JoinPicks(p.Questions[i], _picks[i]);
+        var input = RequestStore.ReadToolInput(p) ?? new System.Text.Json.Nodes.JsonObject();
+        _busy = true;
+        Respond(ResponseBuilder.Answers(input, answers));
     }
 
     async Task SendReplyAsync()

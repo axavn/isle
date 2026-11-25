@@ -94,7 +94,7 @@ public partial class IslandWindow : Window, IIslandHost
         _crumb.Home += () => ShowPlace(null);
         CrumbSlot.Content = _crumb;
         foreach (var f in new FrameworkElement[] { _home, _music, _claudeFace }) { f.Visibility = Visibility.Hidden; f.RenderTransform = new TranslateTransform(); Faces.Children.Add(f); }
-        PreviewMouseDown += (_, e) => _claudeFace.ClickOut(e.OriginalSource as DependencyObject);
+        PreviewMouseDown += (_, e) => { _claudeFace.ClickOut(e.OriginalSource as DependencyObject); OnSideButton(e); };
         PreviewMouseLeftButtonDown += (_, e) => OnPress(e);
 
         _miniArtBox = new Border { Width = Album, Height = Album, Child = _miniArt, VerticalAlignment = VerticalAlignment.Center, Clip = new RectangleGeometry(new Rect(0, 0, Album, Album), 5, 5) };
@@ -131,6 +131,7 @@ public partial class IslandWindow : Window, IIslandHost
         _miniArtBox.Background = new LinearGradientBrush(p.Primary, p.Secondary, 45);
         _miniEq.SetPalette(p);
         Claude.SetPalette(p.Primary, p.Secondary, p.Accent);
+        _wave.SetTarget(_media.SourceAppId); // the equalizer listens to the player on show, not the whole system
         if (_media.IsPlaying && !_tick.IsEnabled) { _wave.Start(); _tick.Start(); }
         else if (!_media.IsPlaying && _tick.IsEnabled) { _tick.Stop(); _wave.Stop(); _miniEq.SetLevels(null); _music.SetLevels(null); }
         RebuildCollapsed();
@@ -169,8 +170,10 @@ public partial class IslandWindow : Window, IIslandHost
         else if (HasMusic) { Add(_lead, _miniArtBox); Add(_trail, _miniEq); }
         _lead.MinWidth = _lead.Children.Count == 0 ? MinSide - CutoutGap : 0;
         _trail.MinWidth = _trail.Children.Count == 0 ? MinSide - CutoutGap : 0;
+        CollapsedRow.InvalidateMeasure();
         CollapsedRow.Measure(new Size(double.PositiveInfinity, CollapsedH));
         _collapsedW = CollapsedRow.DesiredSize.Width + SidePad * 2;
+        FitTaskbarRow();
         if (!_open) { _w.Use(IslandMotion.Open.R, IslandMotion.Open.D); _w.Target = _collapsedW; }
     }
 
@@ -189,12 +192,17 @@ public partial class IslandWindow : Window, IIslandHost
         Retarget();
     }
 
-    /// The open panel's height for the shown face: 146, or taller (to 230) when its content asks.
+    /// The open panel's height for the shown face: the standard 146, which Home and Music always keep
+    /// (Isle's `faceContentHeight` is nil for them), or taller (to 230) when the Claude face asks.
     void Retarget()
     {
         if (_shownFace is not FrameworkElement f) return;
-        f.Measure(new Size(OpenW - 44, double.PositiveInfinity));
-        _openH = Math.Clamp(Math.Ceiling(f.DesiredSize.Height) + BandH + 2 + 8, OpenH, MaxH);
+        if (_place != IslandFace.Claude) _openH = OpenH;
+        else
+        {
+            f.Measure(new Size(OpenW - 44, double.PositiveInfinity));
+            _openH = Math.Clamp(Math.Ceiling(f.DesiredSize.Height) + BandH + 2 + 8, OpenH, MaxH);
+        }
         if (_open) _h.Target = _openH;
     }
 
@@ -203,12 +211,14 @@ public partial class IslandWindow : Window, IIslandHost
     {
         if (_open) return;
         _open = true;
+        FaceKeys(true);
         if (Claude.NeedsAttention) ShowPlace(IslandFace.Claude, animate: false);
         Retarget();
         foreach (var s in new[] { _w, _h, _top, _bottom }) s.Use(IslandMotion.Open.R, IslandMotion.Open.D);
         _w.Target = OpenW; _h.Target = _openH; _top.Target = OpenCornersNow.Top; _bottom.Target = OpenCornersNow.Bottom;
         _swellW.Target = _swellH.Target = _lean.Target = 0;
         _collapseOrigin = null;
+        if (_taskbar) TaskbarOpened();
         ExpandedRoot.Visibility = Visibility.Visible;
         if (_place == IslandFace.Music) _music.Tick();
     }
@@ -217,12 +227,14 @@ public partial class IslandWindow : Window, IIslandHost
     {
         if (!_open) return;
         _open = false;
+        FaceKeys(false);
         _collapseOrigin = new Size(_w.Value, _h.Value); // the taper runs between these
         _w.Use(IslandMotion.CollapseWidth.R, IslandMotion.CollapseWidth.D);
         _h.Use(IslandMotion.CollapseHeight.R, IslandMotion.CollapseHeight.D);
         _top.Use(IslandMotion.CollapseCorners.R, IslandMotion.CollapseCorners.D);
         _bottom.Use(IslandMotion.CollapseCorners.R, IslandMotion.CollapseCorners.D);
         _w.Target = _collapsedW; _h.Target = CollapsedH; _top.Target = CollapsedCornersNow.Top; _bottom.Target = CollapsedCornersNow.Bottom;
+        if (_taskbar) TaskbarClosed();
     }
 
     // ---------------- per frame ----------------
@@ -231,19 +243,21 @@ public partial class IslandWindow : Window, IIslandHost
         double t = _clock.Elapsed.TotalSeconds, dt = Math.Clamp(t - _lastT, 0, 0.05);
         _lastT = t;
         if (!CarryFrame(t)) Track(t);
-        foreach (var sp in new[] { _w, _h, _top, _bottom, _swellW, _swellH, _lean, _page }) sp.Step(dt);
+        foreach (var sp in new[] { _w, _h, _top, _bottom, _swellW, _swellH, _lean, _page, _pop }) sp.Step(dt);
         Draw();
     }
 
     Rect IslandRect()
     {
         double w = _w.Value + _swellW.Value, h = _h.Value + _swellH.Value;
+        if (_taskbar) return TaskbarPillRect();
         return new Rect((Width - w) / 2 + _lean.Value, _anchorBottom ? Height - h : 0, w, h);
     }
 
     void Track(double t)
     {
         if (PresentationSource.FromVisual(this) == null || !GetCursorPos(out var cp)) return;
+        if (_tbHidden && !_open) return; // on a hidden taskbar the island is hidden too
         var p = PointFromScreen(new Point(cp.X, cp.Y));
         bool fast = false, sideways = false;
         if (_hasPtr && t - _lastPtrT > 0 && t - _lastPtrT < 0.2)
@@ -256,6 +270,7 @@ public partial class IslandWindow : Window, IIslandHost
 
         var r = IslandRect();
         bool down = (GetAsyncKeyState(0x01) & 0x8000) != 0;
+        if (_taskbar) { TrackTaskbar(p, r, fast && sideways, down); if (!down) _dragFrom = p; return; }
         if (!_open)
         {
             // open zone: the pill plus a 14 pt lip under it (and everything above it, to the screen edge)
@@ -291,6 +306,7 @@ public partial class IslandWindow : Window, IIslandHost
 
     void Draw()
     {
+        if (_taskbar) { DrawTaskbar(); return; }
         var r = IslandRect();
         Geometry geo;
         if (_floating)
@@ -313,7 +329,8 @@ public partial class IslandWindow : Window, IIslandHost
         double pillOpacity = Math.Clamp(1 - progress / 0.35, 0, 1);
         ExpandedRoot.Opacity = openOpacity;
         ExpandedRoot.Height = Math.Max(_openH, r.Height);
-        Canvas.SetLeft(ExpandedRoot, (r.Width - OpenW) / 2);
+        // Top too: taskbar mode moves the content down to its pop-up panel, and it has to come back up
+        Canvas.SetLeft(ExpandedRoot, (r.Width - OpenW) / 2); Canvas.SetTop(ExpandedRoot, 0);
         ExpandedRoot.IsHitTestVisible = _open && openOpacity > 0.5;
         if (!_open && openOpacity <= 0 && _w.Settled) ExpandedRoot.Visibility = Visibility.Hidden;
 

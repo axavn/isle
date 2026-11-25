@@ -14,7 +14,7 @@
             <Setter Property="Foreground" Value="White"/><Setter Property="Background" Value="#1FFFFFFF"/>
             <Setter Property="FontSize" Value="12"/><Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Height" Value="22"/><Setter Property="Padding" Value="12,0"/><Setter Property="Margin" Value="0,0,6,0"/>
-            <Setter Property="Cursor" Value="Hand"/><Setter Property="Focusable" Value="False"/>
+            <Setter Property="Cursor" Value="Hand"/><Setter Property="Focusable" Value="False"/><Setter Property="local:HoverGrow.Enabled" Value="True"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
@@ -32,7 +32,7 @@
 
         <!-- question option: card (radius 9, white 0.07), label + description -->
         <Style x:Key="Option" TargetType="Button">
-            <Setter Property="Foreground" Value="White"/><Setter Property="Cursor" Value="Hand"/><Setter Property="Focusable" Value="False"/>
+            <Setter Property="Foreground" Value="White"/><Setter Property="Cursor" Value="Hand"/><Setter Property="Focusable" Value="False"/><Setter Property="local:HoverGrow.Enabled" Value="True"/>
             <Setter Property="Margin" Value="0,0,0,3"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -86,6 +86,15 @@
                         <TextBlock Text="&#xE9CE;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="10" Foreground="{StaticResource Sec}" VerticalAlignment="Center" Margin="0,0,4,0"/>
                         <TextBlock Text="{Binding QuestionHeader}" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource Sec}"/>
                     </StackPanel>
+                    <StackPanel Orientation="Horizontal" Visibility="{Binding HasQuestionStep, Converter={StaticResource B2V}}">
+                        <TextBlock Text=" · " FontSize="11" Foreground="#4DFFFFFF"/>
+                        <Button Command="{Binding PreviousQuestion}" Visibility="{Binding CanGoBack, Converter={StaticResource B2V}}" Cursor="Hand" Focusable="False" Padding="0,0,4,0">
+                            <Button.Template><ControlTemplate TargetType="Button"><Border Background="Transparent" Padding="{TemplateBinding Padding}">
+                                <Path Data="M16.5,4.5 L9,12 L16.5,19.5" Stretch="Uniform" Width="6" Height="8" Stroke="White" StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+                            </Border></ControlTemplate></Button.Template>
+                        </Button>
+                        <TextBlock Text="{Binding QuestionStep}" FontSize="11" FontWeight="Medium" Foreground="{StaticResource MetaT}"/>
+                    </StackPanel>
                 </StackPanel>
             </DockPanel>
 
@@ -115,11 +124,18 @@
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
                         <Button Style="{StaticResource Option}" Command="{Binding DataContext.Answer, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding Label}">
-                            <TextBlock TextTrimming="CharacterEllipsis">
-                                <Run Text="{Binding Label, Mode=OneWay}" FontSize="12" FontWeight="SemiBold"/>
-                                <Run Text="  "/>
-                                <Run Text="{Binding Description, Mode=OneWay}" FontSize="11" Foreground="#80FFFFFF"/>
-                            </TextBlock>
+                            <DockPanel>
+                                <TextBlock DockPanel.Dock="Left" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="11" VerticalAlignment="Center" Margin="0,0,7,0"
+                                           Visibility="{Binding Multi, Converter={StaticResource B2V}}">
+                                    <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Text" Value="&#xE739;"/><Setter Property="Opacity" Value="0.6"/>
+                                        <Style.Triggers><DataTrigger Binding="{Binding Picked}" Value="True"><Setter Property="Text" Value="&#xE73A;"/><Setter Property="Opacity" Value="1"/></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+                                </TextBlock>
+                                <TextBlock TextTrimming="CharacterEllipsis" VerticalAlignment="Center">
+                                    <Run Text="{Binding Label, Mode=OneWay}" FontSize="12" FontWeight="SemiBold"/>
+                                    <Run Text="  "/>
+                                    <Run Text="{Binding Description, Mode=OneWay}" FontSize="11" Foreground="#80FFFFFF"/>
+                                </TextBlock>
+                            </DockPanel>
                         </Button>
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
@@ -139,16 +155,44 @@
                         <StackPanel Orientation="Horizontal">
                             <Path Data="M7,3 H17 A4,4 0 0 1 21,7 V17 A4,4 0 0 1 17,21 H7 A4,4 0 0 1 3,17 V7 A4,4 0 0 1 7,3 Z M9.5,14.5 L15,9 M10.5,9 H15 V13.5" Stroke="White" StrokeThickness="2.2"
                                   StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Stretch="Uniform" Width="12" Height="12" Margin="0,0,7,0"/>
-                            <TextBlock Text="Terminal"/>
+                            <TextBlock Text="{Binding JumpLabel}"/>
                         </StackPanel>
                     </Button>
                 </StackPanel>
-                <!-- question: Answer in terminal -->
-                <StackPanel Orientation="Horizontal" Visibility="{Binding ShowQuestion, Converter={StaticResource B2V}}">
-                    <Button Style="{StaticResource Pill}" Command="{Binding Jump}">
-                        <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE756;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12" VerticalAlignment="Center" Margin="0,0,7,0"/><TextBlock Text="Answer in terminal"/></StackPanel>
-                    </Button>
-                </StackPanel>
+                <!-- question: Answer in terminal / Type something / Next-Done, or the typed-answer box -->
+                <Grid Visibility="{Binding ShowQuestion, Converter={StaticResource B2V}}">
+                    <StackPanel Orientation="Horizontal" Visibility="{Binding ShowQuestionPills, Converter={StaticResource B2V}}">
+                        <Button Style="{StaticResource Pill}" Command="{Binding AnswerInTerminal}">
+                            <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE756;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12" VerticalAlignment="Center" Margin="0,0,7,0"/><TextBlock Text="{Binding TerminalAnswerLabel}"/></StackPanel>
+                        </Button>
+                        <Button Style="{StaticResource Pill}" Command="{Binding TypeSomething}">
+                            <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE70F;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="11" VerticalAlignment="Center" Margin="0,0,7,0"/><TextBlock Text="Type something"/></StackPanel>
+                        </Button>
+                        <Button Style="{StaticResource Pill}" Command="{Binding Advance}" Visibility="{Binding ShowAdvance, Converter={StaticResource B2V}}" Margin="0">
+                            <TextBlock Text="{Binding AdvanceLabel}">
+                                <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Opacity" Value="1"/>
+                                    <Style.Triggers><DataTrigger Binding="{Binding CanAdvance}" Value="False"><Setter Property="Opacity" Value="0.4"/></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </StackPanel>
+                    <Grid Visibility="{Binding ShowTypeBox, Converter={StaticResource B2V}}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <Border Background="#0FFFFFFF" BorderBrush="#38FFFFFF" BorderThickness="1" CornerRadius="11" Margin="0,0,6,0">
+                            <Grid>
+                                <TextBox x:Name="AnswerBox" Text="{Binding AnswerText, UpdateSourceTrigger=PropertyChanged}" Background="Transparent" BorderThickness="0" Foreground="White" CaretBrush="White"
+                                         FontSize="12" Padding="10,0,8,0" VerticalContentAlignment="Center" IsVisibleChanged="OnAnswerVisible"
+                                         GotKeyboardFocus="OnFocus" LostKeyboardFocus="OnLostFocus" PreviewMouseDown="OnMouseDown" PreviewKeyDown="OnAnswerKey"/>
+                                <TextBlock Text="Type your answer…" FontSize="12" FontWeight="Medium" Foreground="#80FFFFFF" Margin="12,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False">
+                                    <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=AnswerBox}" Value=""><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+                                </TextBlock>
+                            </Grid>
+                        </Border>
+                        <Button Grid.Column="1" Style="{StaticResource Pill}" Command="{Binding SubmitTyped}" Background="#F2FFFFFF" Margin="0">
+                            <TextBlock Text="{Binding TypeSendLabel}" Foreground="Black"/>
+                        </Button>
+                    </Grid>
+                </Grid>
                 <!-- otherwise: Terminal + Reply to Claude… -->
                 <Grid x:Name="ReplyRow">
                     <Grid.Style><Style TargetType="Grid"><Style.Triggers>
@@ -160,10 +204,11 @@
                         <StackPanel Orientation="Horizontal">
                             <Path Data="M7,3 H17 A4,4 0 0 1 21,7 V17 A4,4 0 0 1 17,21 H7 A4,4 0 0 1 3,17 V7 A4,4 0 0 1 7,3 Z M9.5,14.5 L15,9 M10.5,9 H15 V13.5" Stroke="White" StrokeThickness="2.2"
                                   StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Stretch="Uniform" Width="12" Height="12" Margin="0,0,7,0"/>
-                            <TextBlock Text="Terminal"/>
+                            <TextBlock Text="{Binding JumpLabel}"/>
                         </StackPanel>
                     </Button>
-                    <Border Grid.Column="1" Background="#0FFFFFFF" BorderBrush="#38FFFFFF" BorderThickness="1" CornerRadius="11">
+                    <Border Grid.Column="1" Background="#0FFFFFFF" BorderBrush="#38FFFFFF" BorderThickness="1" CornerRadius="11"
+                            Visibility="{Binding CanReply, Converter={StaticResource B2V}}">
                         <Grid>
                             <Path Data="M10,4.5 L2.5,11 L10,17.5 V13.6 C15.2,13.6 18.6,15.2 21.5,19.5 C20.8,13.4 17.4,8.9 10,8.4 Z" Fill="#80FFFFFF" Stretch="Uniform" Width="11" Height="10"
                                   HorizontalAlignment="Left" VerticalAlignment="Center" Margin="10,0,0,0" IsHitTestVisible="False"/>

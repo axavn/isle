@@ -23,10 +23,21 @@ public partial class ClaudeView : UserControl
     /// The draft stays in the box; the keyboard goes back to the window it came from.
     public void ClickOut(DependencyObject? pressed)
     {
-        if (!Reply.IsKeyboardFocused) return;
+        if (!Reply.IsKeyboardFocused && !AnswerBox.IsKeyboardFocused) return;
         for (var d = pressed; d != null; d = d is Visual or System.Windows.Media.Media3D.Visual3D ? VisualTreeHelper.GetParent(d) : LogicalTreeHelper.GetParent(d))
-            if (d == Reply) return;
+            if (d == Reply || d == AnswerBox) return;
         Release();
+    }
+
+    // "Type something": the answer box takes the keyboard as it appears.
+    void OnAnswerVisible(object s, DependencyPropertyChangedEventArgs e)
+    {
+        if (e.NewValue is true) Dispatcher.BeginInvoke(() => { Vm?.KeyboardFocus(true); AnswerBox.Focus(); }, System.Windows.Threading.DispatcherPriority.Input);
+    }
+    void OnAnswerKey(object s, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && Keyboard.Modifiers == ModifierKeys.None) { e.Handled = true; Vm?.SubmitTyped.Execute(null); }
+        else if (e.Key == Key.Escape) { e.Handled = true; Vm?.TypeSomething.Execute(null); Release(); }
     }
 
     void Release() { Keyboard.ClearFocus(); Vm?.KeyboardFocus(false); }

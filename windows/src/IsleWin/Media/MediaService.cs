@@ -27,6 +27,8 @@ public sealed class MediaService : INotifyPropertyChanged
     /// The cover's three colours (Isle's picker); the grey fallback when there is no art.
     public ArtworkPalette Palette { get; private set; } = ArtworkPalette.Fallback;
     public bool IsPlaying { get; private set; }
+    /// SMTC SourceAppUserModelId of the session being shown (null when none); feed it to WaveformService.SetTarget.
+    public string? SourceAppId { get; private set; }
     public TimeSpan Duration { get; private set; }
     public bool Shuffle { get; private set; }
     public bool ShuffleEnabled { get; private set; }
@@ -80,6 +82,7 @@ public sealed class MediaService : INotifyPropertyChanged
         {
             if (_session != null) { _session.MediaPropertiesChanged -= OnProps; _session.PlaybackInfoChanged -= OnPlayback; _session.TimelinePropertiesChanged -= OnTimeline; }
             _session = s;
+            SourceAppId = s?.SourceAppUserModelId;
             if (s != null) { s.MediaPropertiesChanged += OnProps; s.PlaybackInfoChanged += OnPlayback; s.TimelinePropertiesChanged += OnTimeline; }
         }
         if (s == null) { Apply(false, "", "", "", null, false, default, false, false, default, false); return; }

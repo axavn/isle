@@ -59,6 +59,7 @@ public sealed class HomeView : Grid
         tile.MouseLeftButtonUp += (_, _) => Picked?.Invoke(face);
         tile.MouseEnter += (_, _) => tile.Background = IsleStyle.White(0.10);
         tile.MouseLeave += (_, _) => Refresh();
+        HoverGrow.Attach(tile);
         return tile;
     }
 
@@ -80,22 +81,26 @@ public sealed class HomeView : Grid
     }
 }
 
-/// The way home from inside a face, top-right in the band: ⊞ › Music.
+/// The way home from inside a face, top-right in the band: ⊞ › Music (NotchCrumb). The home mark is the
+/// button (grid 0.55, chevron 0.35, a 22 pt target 4 pt wider than the glyphs each side) and grows under
+/// the pointer like Isle's other controls; the face's name beside it (0.85) is only a label.
 public sealed class Crumb : StackPanel
 {
-    readonly TextBlock _title = new() { FontFamily = IsleStyle.Text, FontSize = IsleStyle.Meta, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center };
+    readonly TextBlock _title = new() { FontFamily = IsleStyle.Text, FontSize = IsleStyle.Meta, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White, Opacity = 0.85, VerticalAlignment = VerticalAlignment.Center };
     public event Action? Home;
 
     public Crumb()
     {
-        Orientation = Orientation.Horizontal; Height = 22; Cursor = Cursors.Hand; Background = Brushes.Transparent;
-        var grid = IsleStyle.Icon(IsleStyle.Grid2x2Fill, 11, Brushes.White);
-        var chev = IsleStyle.Icon(IsleStyle.ChevronRight, 7, IsleStyle.White(IsleStyle.MetaTone), stroke: true, strokeWidth: 3.2);
-        chev.Margin = new Thickness(6, 0, 6, 0);
-        grid.Margin = new Thickness(4, 0, 0, 0);
-        Children.Add(grid); Children.Add(chev); Children.Add(_title);
-        MouseLeftButtonUp += (_, _) => Home?.Invoke();
-        MouseEnter += (_, _) => Opacity = 0.8; MouseLeave += (_, _) => Opacity = 1;
+        Orientation = Orientation.Horizontal; Height = 22;
+        var grid = IsleStyle.Icon(IsleStyle.Grid2x2Fill, 11, Brushes.White); grid.Opacity = 0.55;
+        var chev = IsleStyle.Icon(IsleStyle.ChevronRight, 8, Brushes.White, stroke: true, strokeWidth: 3.2); chev.Opacity = 0.35;
+        chev.Margin = new Thickness(6, 0, 0, 0);
+        var mark = new StackPanel { Orientation = Orientation.Horizontal, Height = 22, Background = Brushes.Transparent, Cursor = Cursors.Hand };
+        mark.Children.Add(new Border { Width = 4 }); mark.Children.Add(grid); mark.Children.Add(chev); mark.Children.Add(new Border { Width = 4 });
+        mark.MouseLeftButtonUp += (_, _) => Home?.Invoke();
+        HoverGrow.Attach(mark);
+        Children.Add(mark); Children.Add(_title); // Isle's 6 pt spacing less 6: the target's 4 pt padding is the gap
+
     }
 
     public string Title { set => _title.Text = value; }

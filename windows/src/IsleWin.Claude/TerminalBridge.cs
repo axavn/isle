@@ -65,6 +65,44 @@ public static class TerminalBridge
         return host;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    struct PROCESS_BASIC_INFORMATION { public IntPtr Reserved1, PebBaseAddress, Reserved2a, Reserved2b, UniqueProcessId, InheritedFromUniqueProcessId; }
+    [DllImport("ntdll.dll")] static extern int NtQueryInformationProcess(IntPtr h, int cls, ref PROCESS_BASIC_INFORMATION info, int size, out int ret);
+    [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+
+    static int ParentPid(int pid)
+    {
+        var h = OpenProcess(0x1000 /* PROCESS_QUERY_LIMITED_INFORMATION */, false, pid);
+        if (h == IntPtr.Zero) return 0;
+        try
+        {
+            var info = new PROCESS_BASIC_INFORMATION();
+            return NtQueryInformationProcess(h, 0, ref info, Marshal.SizeOf<PROCESS_BASIC_INFORMATION>(), out _) == 0 ? (int)info.InheritedFromUniqueProcessId : 0;
+        }
+        finally { CloseHandle(h); }
+    }
+
+    static IntPtr MainWindow(int pid)
+    {
+        try { using var p = Process.GetProcessById(pid); p.Refresh(); return p.MainWindowHandle; } catch { return IntPtr.Zero; }
+    }
+
+    /// The Claude desktop app's window for a session it started. The registry pid is the Claude Code child, so walk up
+    /// the parents to the first process that owns a visible main window; failing that, any `claude` process that has one.
+    public static IntPtr FindDesktopWindow(int pid)
+    {
+        var seen = new HashSet<int>();
+        for (var p = pid > 0 ? ParentPid(pid) : 0; p > 4 && seen.Add(p); p = ParentPid(p))
+            if (MainWindow(p) is var w && w != IntPtr.Zero) return w;
+        try
+        {
+            foreach (var proc in Process.GetProcessesByName("claude"))
+                using (proc) { proc.Refresh(); if (proc.MainWindowHandle != IntPtr.Zero && proc.MainWindowTitle.Length > 0) return proc.MainWindowHandle; }
+        }
+        catch { }
+        return IntPtr.Zero;
+    }
+
     public static bool Jump(IntPtr hwnd)
     {
         if (hwnd == IntPtr.Zero) return false;
@@ -77,7 +115,7 @@ public static class TerminalBridge
     {
         try
         {
-            using var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(claudeSessionsDir, pid + ".json")));
+            using var doc = JsonDocument.Parse(IsleWin.Core.AtomicFile.ReadAllText(Path.Combine(claudeSessionsDir, pid + ".json")));
             return doc.RootElement.TryGetProperty("entrypoint", out var e) && e.GetString() is { } s && s.Contains("desktop", StringComparison.OrdinalIgnoreCase);
         }
         catch { return false; }

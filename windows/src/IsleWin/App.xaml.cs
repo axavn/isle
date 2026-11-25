@@ -48,6 +48,8 @@ public partial class App : Application
         }
         var menu = new System.Windows.Forms.ContextMenuStrip();
         menu.Items.Add("Show/Hide island", null, (_, _) => { if (_window!.IsVisible) _window.Hide(); else _window.Show(); });
+        menu.Items.Add("Place on taskbar", null, (_, _) => _window!.PlaceOnTaskbar());
+        menu.Items.Add("Place at top of screen", null, (_, _) => _window!.PlaceAtTop());
         menu.Items.Add("Install Claude hooks", null, (_, _) => Hooks(true));
         menu.Items.Add("Remove Claude hooks", null, (_, _) => Hooks(false));
         menu.Items.Add("Quit", null, (_, _) => Shutdown());

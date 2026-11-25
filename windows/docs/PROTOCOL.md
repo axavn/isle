@@ -81,6 +81,23 @@ and never blocks when the app isn't running.
   (`decision` is an object, never a string)
 - Answers: `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","updatedInput":<tool_input from the request, verbatim, plus "answers":{"<question text>":"<chosen label>"}>}}`
 
+## AskUserQuestion
+
+A `PermissionRequest` hook (`ask`) for `AskUserQuestion` is **not** an approval.
+It means the terminal's own question UI is up, usually because `ask-question`
+got no answer. `ask` marks the session `needs_question` and returns at once: no
+request file, no blocking. The reader also skips any `permission` request whose
+tool is `AskUserQuestion`.
+
+The question is answered through the `ask-question` (PreToolUse) request, kind
+`question`. It is only blocked on when every question has at least one option;
+otherwise only the terminal can answer. Answers go into `updatedInput.answers`,
+keyed by question text:
+
+- single-select: the chosen label.
+- multi-select: the picked labels joined by `", "`, in option order.
+- "Type something": the free text, as typed.
+
 ## Claude Code's own records (read-only)
 
 `%USERPROFILE%\.claude\sessions\<pid>.json`, verified on this machine
@@ -111,8 +128,11 @@ best, ties broken by the newest `updated_at`.
 
 ## Reply by console input (`IsleWin.Claude.TerminalBridge`)
 
-Only CLI sessions are targeted: registry records whose `entrypoint` contains
-`desktop` (Claude desktop app) have no terminal and are ignored.
+Console input only works for CLI sessions. Registry records whose `entrypoint`
+contains `desktop` (Claude desktop app) have no console, but they are **shown**
+like any other session. Differences: no Reply box; Jump brings the Claude
+desktop window forward (found by walking up from the registry pid); approve /
+deny and answers work the same, through the request files.
 
 Send: `AttachConsole(pid)` to the registry `pid`'s console (process-wide, so
 one attach at a time, with Ctrl+C ignored while attached), open `CONIN$`, and

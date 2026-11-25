@@ -107,9 +107,7 @@ public sealed class MusicView : Grid
             Template = Bare(),
         };
         b.Click += (_, _) => click();
-        b.PreviewMouseLeftButtonDown += (_, _) => b.RenderTransform = new ScaleTransform(0.92, 0.92, b.Width / 2, b.Height / 2);
-        b.PreviewMouseLeftButtonUp += (_, _) => b.RenderTransform = null;
-        b.MouseLeave += (_, _) => b.RenderTransform = null;
+        HoverGrow.Attach(b, press: true);
         return b;
     }
 

@@ -1,9 +1,8 @@
 using NAudio.Dsp;
-using NAudio.Wave;
 
 namespace IsleWin.Media;
 
-/// 16-band spectrum of the default output (loopback). The capture thread writes a locked float[16]; the UI calls Snapshot.
+/// 16-band spectrum of one player's audio (process loopback). The capture thread writes a locked float[16]; the UI calls Snapshot.
 /// Tuned to feel lively: 50% overlapping FFTs (~90 updates/s), treble tilt so highs move as much as bass,
 /// auto-gain so quiet and loud songs both use the full height, fast attack and a quick (but not jittery) fall.
 public sealed class WaveformService
@@ -14,69 +13,111 @@ public sealed class WaveformService
     readonly float[] _window = new float[N];
     readonly float[] _buf = new float[N];
     readonly Complex[] _fft = new Complex[N];
-    WasapiLoopbackCapture? _cap;
     readonly float[] _prev = new float[Bands];
-    int _fill; long _lastData; volatile bool _failed;
+    int _fill; long _lastData;
     double _ref = -30; // auto-gain: loudest recent band, in dB
+
+    // Capture is process-scoped (Spotify by default, or the app the island shows), never the whole output.
+    // One supervisor thread owns the capture: it opens it while active, rebuilds it when the target
+    // process relaunches / changes or no buffers arrive for a while (device change), and closes it when stopped.
+    const int StallMs = 5000, PollMs = 2000;
+    readonly object _ctl = new();
+    readonly AutoResetEvent _wake = new(false);
+    Thread? _thread;
+    volatile bool _active, _tapOn;
+    string _target = "Spotify"; // process name without .exe
 
     public WaveformService() { for (int i = 0; i < N; i++) _window[i] = (float)(0.5 * (1 - Math.Cos(2 * Math.PI * i / (N - 1)))); }
 
+    /// True while a capture is bound to the target process and delivering. False: levels are empty and the UI should use its own animation.
+    public bool HasTap => _tapOn;
+
+    /// Aim at the app the island shows, from SMTC's SourceAppUserModelId ("Spotify.exe", "SpotifyAB.SpotifyMusic_...!Spotify", "chrome.exe").
+    /// null or unknown ids fall back to Spotify.
+    public void SetTarget(string? sourceAppId)
+    {
+        string name = "Spotify";
+        if (!string.IsNullOrWhiteSpace(sourceAppId) && !sourceAppId.Contains("spotify", StringComparison.OrdinalIgnoreCase))
+        {
+            string id = sourceAppId.Trim();
+            if (id.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) name = id[..^4];
+            else if (!id.Contains('!') && !id.Contains('_')) name = id; // classic desktop ids are bare; Store ids (Pkg_hash!App) can't be mapped
+        }
+        lock (_ctl) { if (_target == name) return; _target = name; }
+        _wake.Set();
+    }
+
+    /// Begin capturing (call while playing). Idempotent.
     public void Start()
     {
-        if (_cap != null) return;
-        try
+        lock (_ctl)
         {
-            _failed = false; _fill = 0;
-            var c = new WasapiLoopbackCapture();
-            c.DataAvailable += OnData;
-            c.RecordingStopped += (_, e) => { if (e.Exception != null) { App.Log(e.Exception); _failed = true; } };
-            _cap = c;
-            c.StartRecording();
+            _active = true;
+            _thread ??= new Thread(Run) { IsBackground = true, Name = "IsleWaveform" };
+            if (!_thread.IsAlive && _thread.ThreadState.HasFlag(ThreadState.Unstarted)) _thread.Start();
         }
-        catch (Exception e) { App.Log(e); _failed = true; Release(); }
+        _wake.Set();
     }
 
+    /// Stop capturing (call while paused) and clear the levels.
     public void Stop()
     {
-        Release();
-        lock (_lock) Array.Clear(_levels);
+        _active = false; _tapOn = false;
+        _wake.Set();
+        lock (_lock) { Array.Clear(_levels); Array.Clear(_prev); }
     }
 
-    void Release()
+    void Run()
     {
-        var c = _cap; _cap = null;
-        if (c == null) return;
-        try { c.StopRecording(); } catch { }
-        try { c.Dispose(); } catch { }
+        while (true)
+        {
+            try
+            {
+                if (!_active) { _tapOn = false; _wake.WaitOne(); continue; }
+                string target; lock (_ctl) target = _target;
+                int pid = ProcessLoopback.FindTopLevel(target);
+                if (pid == 0) { _tapOn = false; _wake.WaitOne(PollMs); continue; } // not running: stay empty, no global fallback
+                CaptureLoop(target, pid);
+            }
+            catch (Exception e) { _tapOn = false; App.Log(e); _wake.WaitOne(PollMs); }
+        }
     }
 
-    // Capture thread: no UI objects here.
-    void OnData(object? s, WaveInEventArgs e)
+    void CaptureLoop(string target, int pid)
     {
+        using var pl = ProcessLoopback.Open(pid);
+        _fill = 0; _ref = -30;
+        long started = Environment.TickCount64, polled = started;
+        _lastData = started; _tapOn = true;
         try
         {
-            var f = ((WasapiLoopbackCapture)s!).WaveFormat;
-            int ch = Math.Max(1, f.Channels), bytes = f.BitsPerSample / 8, frames = e.BytesRecorded / (bytes * ch);
-            bool isFloat = f.Encoding == WaveFormatEncoding.IeeeFloat || (f.Encoding == WaveFormatEncoding.Extensible && bytes == 4);
-            if (!isFloat && bytes != 2) return;
-            _lastData = Environment.TickCount64;
-            for (int i = 0; i < frames; i++)
+            while (_active)
             {
-                float sum = 0;
-                for (int c = 0; c < ch; c++)
-                {
-                    int o = (i * ch + c) * bytes;
-                    sum += isFloat ? BitConverter.ToSingle(e.Buffer, o) : BitConverter.ToInt16(e.Buffer, o) / 32768f;
-                }
-                _buf[_fill++] = sum / ch;
-                if (_fill == N)
-                {
-                    Analyze(f.SampleRate);
-                    Array.Copy(_buf, N / 2, _buf, 0, N / 2); _fill = N / 2; // 50% overlap: twice the update rate
-                }
+                pl.Pump(100, OnData);
+                long now = Environment.TickCount64;
+                if (now - _lastData > StallMs) return; // stalled (device change, tap died): rebuild
+                if (now - polled < PollMs) continue;
+                polled = now;
+                string t; lock (_ctl) t = _target;
+                if (t != target || ProcessLoopback.FindTopLevel(target) != pid) return; // re-aimed, or the player relaunched
             }
         }
-        catch (Exception ex) { App.Log(ex); _failed = true; }
+        finally { _tapOn = false; }
+    }
+
+    // Capture thread: no UI objects here. Interleaved stereo float at 48 kHz.
+    void OnData(float[] data, int frames, bool silent)
+    {
+        _lastData = Environment.TickCount64;
+        for (int i = 0; i < frames; i++)
+        {
+            _buf[_fill++] = silent ? 0 : (data[i * 2] + data[i * 2 + 1]) * 0.5f;
+            if (_fill == N)
+            {
+                Analyze(ProcessLoopback.SampleRate);
+                Array.Copy(_buf, N / 2, _buf, 0, N / 2); _fill = N / 2; // 50% overlap: twice the update rate
+            }
+        }
     }
 
     void Analyze(int rate)
@@ -115,7 +156,7 @@ public sealed class WaveformService
     /// UI thread: copies the current levels (0..1) into dest.
     public void Snapshot(float[] dest)
     {
-        if (_failed || _cap == null)
+        if (!_tapOn)
         {
             double t = Environment.TickCount64 / 1000.0;
             for (int i = 0; i < Bands; i++) dest[i] = (float)(0.35 + 0.25 * Math.Sin(t * (2.1 + i * 0.37) + i));
