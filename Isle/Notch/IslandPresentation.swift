@@ -111,6 +111,10 @@ final class IslandPresentation: ObservableObject {
     /// happens on one screen; the face it lands on is the shared choice.
     let pager = FacePager()
 
+    /// The control under the pointer, which grows (`HoverTracker`). Per
+    /// island: its controls are laid out in its own window's space.
+    let hover = HoverTracker()
+
     /// A file drag is over this island, so it's open on the drop face. Set
     /// only through `beginDrop` / `endDrop`, from the window's own dragging
     /// callbacks (see `NotchWindowController`'s drop handling).
@@ -237,6 +241,16 @@ final class IslandPresentation: ObservableObject {
     func handleScroll(_ event: NSEvent) -> Bool {
         guard state.isExpanded, !isDropTarget else { return false }
         return pager.handle(event, content: content)
+    }
+
+    /// A press of one of the mouse's other buttons reached this island's
+    /// window. Back and forward step to the previous and next face; any
+    /// other button goes on to the views. As with a swipe, a collapsed
+    /// island pages nothing.
+    func handleButton(_ event: NSEvent) -> Bool {
+        guard state.isExpanded, !isDropTarget,
+              let step = FacePager.step(forButton: event.buttonNumber) else { return false }
+        return pager.step(step, content: content, at: event.timestamp)
     }
 
     /// This island's visual state: its own hover crossed with the shared

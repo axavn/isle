@@ -175,6 +175,7 @@ final class NotchWindowController {
             island.presentation.setHovering(false)
             island.presentation.relaxProximity()
             island.window.orderOut(nil)
+            island.presentation.hover.pointerLeft()
         }
         // The panels are kept, not destroyed: `hide()` is a toggle from the
         // menu bar, and rebuilding the hosting views on the way back would
@@ -292,6 +293,10 @@ final class NotchWindowController {
         window.scrollInterceptor = { [weak presentation] event in
             presentation?.handleScroll(event) ?? false
         }
+        // So do a mouse's back and forward buttons.
+        window.buttonInterceptor = { [weak presentation] event in
+            presentation?.handleButton(event) ?? false
+        }
         // Files dragged onto the island open the drop face.
         window.registerForDraggedTypes([.fileURL])
         window.dropHandler = self
@@ -336,7 +341,7 @@ final class NotchWindowController {
         let describe = { [weak self, weak presentation] () -> String in
             guard let self, let presentation else { return "gone" }
             return "display \(id) \(presentation.state) hover \(presentation.isHovering) held \(presentation.isHeldOpen)"
-                + " placement \(presentation.placement) opening \(presentation.opening.upward ? "up" : "down")"
+                + " placement \(presentation.placement) opening rise \(presentation.opening.rise) pin \(presentation.opening.pin)"
                 + " face \(self.viewModel.expandedPlace)"
                 + " composing \(self.viewModel.composing.map { "\($0)" } ?? "no") background \(self.viewModel.panelBackground.rawValue)"
         }
@@ -659,6 +664,18 @@ final class NotchWindowController {
         let move = measureMove(event)
 
         let pointerIsland = island(containing: pointer)
+
+        // The control under the pointer grows (`HoverTracker`): the island
+        // under the pointer gets the move in its own window's space, where
+        // its controls are laid out; every other island is told it's gone.
+        for island in islands.values {
+            if island === pointerIsland {
+                island.presentation.hover.pointerMoved(
+                    island.hosting.topLeftPoint(fromWindow: island.window.convertPoint(fromScreen: pointer)))
+            } else {
+                island.presentation.hover.pointerLeft()
+            }
+        }
         // Onto another display: whether an open island is in front of the
         // user changed, which the shortcuts read (`islandPresence`).
         let pointerDisplay = pointerIsland.map(ObjectIdentifier.init)
@@ -731,12 +748,11 @@ final class NotchWindowController {
         }
     }
 
-    /// Opens an island on the hover, toward where the pointer came from
-    /// off its notch: the last place it was outside the drawn capsule.
+    /// Opens an island on the hover, off its notch leaning back along the
+    /// way the pointer came in (`IslandApproach`).
     private func open(_ island: Island) {
-        if island.presentation.placement.isFloating, let drawn = drawnRectInScreen(island),
-           let origin = pointerTrail.last(where: { !drawn.contains($0) }) {
-            island.presentation.approach = IslandApproach(from: origin, onto: drawn)
+        if island.presentation.placement.isFloating, let drawn = drawnRectInScreen(island) {
+            island.presentation.approach = IslandApproach(trail: pointerTrail, onto: drawn)
         }
         island.presentation.setHovering(true)
         // Used up if it opened; if it didn't, it's nobody else's.
@@ -1140,6 +1156,24 @@ extension NotchWindowController: ShortcutIslandHost {
             return .pointerScreen
         }
         return .elsewhere
+    }
+
+    /// The open island in front of the user — the pointer is on it, or the
+    /// open shortcut is holding it — if it's on a face it could page from.
+    private var pagingIsland: Island? {
+        islands.values.first {
+            $0.presentation.isHovering && $0.presentation.state.isExpanded && !$0.presentation.isDropTarget
+        }
+    }
+
+    func canStepFace(_ step: Int) -> Bool {
+        guard pagingIsland != nil, viewModel.showsHome, let face = viewModel.expandedPlace.face else { return false }
+        return viewModel.neighbor(of: face, step: step) != nil
+    }
+
+    func stepFaceFromShortcut(_ step: Int) {
+        guard let island = pagingIsland else { return }
+        _ = island.presentation.pager.step(step, content: viewModel, at: ProcessInfo.processInfo.systemUptime)
     }
 
     /// Open the island if none is open; otherwise put it away — whatever is

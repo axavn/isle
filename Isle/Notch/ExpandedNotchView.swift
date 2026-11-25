@@ -92,6 +92,8 @@ struct ExpandedNotchView: View {
                         .contentShape(Rectangle())
                         .onTapGesture { viewModel.restartWaveform() }
                         .allowsHitTesting(viewModel.waveformSource.capturesAudio)
+                        .disabled(!viewModel.waveformSource.capturesAudio)
+                        .hoverGrow()
                         .padding(.top, 10 - Self.waveformSlack)
                         .padding(.trailing, 4 - Self.waveformSlack)
                         .modifier(SwipeFade(pager: island.pager))
@@ -288,24 +290,16 @@ struct ExpandedNotchView: View {
     // MARK: - Artwork
 
     private var artwork: some View {
-        Group {
-            if let image = media.artwork {
-                Image(nsImage: image)
-                    .resizable()
-                    .interpolation(.high)
-                    .antialiased(true)
-                    .aspectRatio(contentMode: .fill)
-            } else {
-                LinearGradient(
-                    colors: [palette.primary, palette.secondary],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                .overlay {
-                    Image(systemName: "music.note")
-                        .font(.system(size: 22, weight: .medium))
-                        .foregroundStyle(.islandSecondary(0.75))
-                }
+        CoverArt(image: media.artwork, awaiting: viewModel.awaitingCover) {
+            LinearGradient(
+                colors: [palette.primary, palette.secondary],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .overlay {
+                Image(systemName: "music.note")
+                    .font(.system(size: 22, weight: .medium))
+                    .foregroundStyle(.islandSecondary(0.75))
             }
         }
         // Sized to fill the usable content height (panel 146 minus the
@@ -501,6 +495,7 @@ struct ExpandedNotchView: View {
                 .animation(.easeInOut(duration: 0.15), value: active)
         }
         .buttonStyle(.plain)
+        .hoverGrow()
     }
 }
 
@@ -630,6 +625,7 @@ private struct OutputButton: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(devices.current.map { "Output: \($0.name)" } ?? "Output")
+                .hoverGrow()
                 .transition(.opacity)
             }
         }
@@ -668,6 +664,7 @@ private struct OutputList: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .hoverGrow()
 
                 Spacer(minLength: 0)
             }
@@ -775,6 +772,7 @@ private struct OutputVolumeSlider: View {
             Button(action: volume.toggleMute) { glyph }
                 .buttonStyle(.plain)
                 .accessibilityLabel(state.isMuted == true ? "Unmute" : "Mute")
+                .hoverGrow()
         } else {
             glyph
         }
