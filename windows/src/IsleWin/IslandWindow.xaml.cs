@@ -40,6 +40,7 @@ public partial class IslandWindow : Window, IIslandHost
 
     public ClaudeViewModel Claude { get; }
     readonly MediaService _media = new();
+    public MediaService Media => _media;
     readonly WaveformService _wave = new();
     readonly MusicView _music;
     readonly ClaudeView _claudeFace;
@@ -93,7 +94,24 @@ public partial class IslandWindow : Window, IIslandHost
         _home.Picked += f => ShowPlace(f);
         _crumb.Home += () => ShowPlace(null);
         CrumbSlot.Content = _crumb;
-        foreach (var f in new FrameworkElement[] { _home, _music, _claudeFace }) { f.Visibility = Visibility.Hidden; f.RenderTransform = new TranslateTransform(); Faces.Children.Add(f); }
+        _home.Visibility = Visibility.Hidden; _home.RenderTransform = new TranslateTransform(); Faces.Children.Add(_home);
+        AddFaceView(IslandFace.Music, _music); AddFaceView(IslandFace.Claude, _claudeFace);
+
+        // Pomodoro (opt-in, from the tray until there's a Settings window): a face, a Home tile, and a seat on the
+        // pill from its first start until it's reset
+        AddFaceView(IslandFace.Pomodoro, new PomodoroView(_pomodoro));
+        _home.AddTile(IslandFace.Pomodoro, (FrameworkElement)PomodoroView.TileIcon(), "Pomodoro",
+            () => _pomodoro.Glance.Split('\n') is var g && g[0].Length > 0 ? (g[0], g.Length > 1 ? g[1] : "") : ("", ""), _pomodoro);
+        _pomoCluster = new PomodoroPill(_pomodoro); _pomoRing = new PomodoroPill(_pomodoro, PomodoroPill.Part.RingOnly); _pomoClock = new PomodoroPill(_pomodoro, PomodoroPill.Part.ClockOnly);
+        _pomodoro.PropertyChanged += (_, _) =>
+        {
+            // the pill re-lays out only when the timer takes or leaves its seat, or its clock slot changes width
+            var key = (PomodoroOnPill, _pomodoro.ClockTemplate);
+            if (key != _pomoPillKey) { _pomoPillKey = key; RebuildCollapsed(); }
+        };
+        InitShelf();
+        IsleSettings.Changed += () => Dispatcher.BeginInvoke(ApplySettings);
+        ApplySettings();
         PreviewMouseDown += (_, e) => { _claudeFace.ClickOut(e.OriginalSource as DependencyObject); OnSideButton(e); };
         PreviewMouseLeftButtonDown += (_, e) => OnPress(e);
 
@@ -110,6 +128,7 @@ public partial class IslandWindow : Window, IIslandHost
         };
         _media.PropertyChanged += (_, _) => OnMedia();
         Claude.PropertyChanged += (_, _) => OnClaude();
+        Claude.Sound += s => Dispatcher.BeginInvoke(() => OnClaudeSound(s));
         Loaded += (_, _) =>
         {
             _media.Start(); Claude.Start();
@@ -124,6 +143,20 @@ public partial class IslandWindow : Window, IIslandHost
     bool HasMusic => _media.HasTrack;
     bool HasClaude => Claude.HasSession;
 
+    readonly PomodoroService _pomodoro = new();
+    readonly PomodoroPill _pomoCluster, _pomoRing, _pomoClock;
+    (bool, string) _pomoPillKey;
+    bool PomodoroOnPill => IsleSettings.Current.Pomodoro.Enabled && _pomodoro.IsShownOnPill;
+
+    /// The tray's settings changed: Pomodoro comes or goes (switched off, it's reset, as turning it off does).
+    void ApplySettings()
+    {
+        bool on = IsleSettings.Current.Pomodoro.Enabled;
+        if (!on) _pomodoro.Reset();
+        SetFaceAvailable(IslandFace.Pomodoro, on);
+        RebuildCollapsed();
+    }
+
     void OnMedia()
     {
         var p = _media.Palette;
@@ -131,6 +164,7 @@ public partial class IslandWindow : Window, IIslandHost
         _miniArtBox.Background = new LinearGradientBrush(p.Primary, p.Secondary, 45);
         _miniEq.SetPalette(p);
         Claude.SetPalette(p.Primary, p.Secondary, p.Accent);
+        _pomodoro.SetPalette(p.Accent, p.Secondary);
         _wave.SetTarget(_media.SourceAppId); // the equalizer listens to the player on show, not the whole system
         if (_media.IsPlaying && !_tick.IsEnabled) { _wave.Start(); _tick.Start(); }
         else if (!_media.IsPlaying && _tick.IsEnabled) { _tick.Stop(); _wave.Stop(); _miniEq.SetLevels(null); _music.SetLevels(null); }
@@ -146,6 +180,7 @@ public partial class IslandWindow : Window, IIslandHost
         _word.Foreground = Claude.MarkerBrush;
         if (Claude.NeedsAttention && !_wasAttention) { ShowPlace(IslandFace.Claude); Open(); }
         _wasAttention = Claude.NeedsAttention;
+        ToastChanged(); // an alert hides a toast; its end shows what's left of one
         RebuildCollapsed();
         Retarget();
     }
@@ -155,19 +190,28 @@ public partial class IslandWindow : Window, IIslandHost
     void RebuildCollapsed()
     {
         _lead.Children.Clear(); _trail.Children.Clear();
+        _lead.Margin = new Thickness(0, 0, CutoutGap, 0); _trail.Margin = new Thickness(CutoutGap, 0, 0, 0);
         void Add(Panel p, FrameworkElement e) { e.Margin = new Thickness(p.Children.Count > 0 ? Gap : 0, 0, 0, 0); p.Children.Add(e); }
-        if (HasMusic && HasClaude)
+        // a running Pomodoro: its 16 pt ring and clock after Claude's word, or opposite the music; alone, the
+        // 22 pt ring in the art's place and the clock across the gap
+        bool pomo = PomodoroOnPill;
+        if (_drawnToast is { } toast) BuildToastRow(toast); // a toast borrows the whole pill
+        else if (HasMusic && HasClaude)
         {
             Add(_lead, _miniArtBox); Add(_lead, _miniEq);
             _miniDots.Width = _miniDots.Height = Dots;
             Add(_trail, _miniDots); Add(_trail, _word);
+            if (pomo) Add(_trail, _pomoCluster);
         }
         else if (HasClaude)
         {
             _miniDots.Width = _miniDots.Height = Album;
             Add(_lead, _miniDots); Add(_trail, _word);
+            if (pomo) Add(_trail, _pomoCluster);
         }
+        else if (HasMusic && pomo) { Add(_lead, _miniArtBox); Add(_lead, _miniEq); Add(_trail, _pomoCluster); }
         else if (HasMusic) { Add(_lead, _miniArtBox); Add(_trail, _miniEq); }
+        else if (pomo) { Add(_lead, _pomoRing); Add(_trail, _pomoClock); }
         _lead.MinWidth = _lead.Children.Count == 0 ? MinSide - CutoutGap : 0;
         _trail.MinWidth = _trail.Children.Count == 0 ? MinSide - CutoutGap : 0;
         CollapsedRow.InvalidateMeasure();
@@ -182,7 +226,7 @@ public partial class IslandWindow : Window, IIslandHost
         _place = place;
         int i = IndexOf(place);
         _shownFace = FaceAt(i);
-        _crumb.Title = place switch { IslandFace.Music => "Music", IslandFace.Claude => "Claude", _ => "" };
+        _crumb.Title = place?.ToString() ?? ""; // Music, Claude, Pomodoro, Shelf: Isle's tab titles
         CrumbSlot.Visibility = place == null ? Visibility.Collapsed : Visibility.Visible;
         // faces sit side by side, Home │ Music │ Claude, and slide into place
         _page.Use(PageSpring.R, PageSpring.D);
@@ -197,7 +241,9 @@ public partial class IslandWindow : Window, IIslandHost
     void Retarget()
     {
         if (_shownFace is not FrameworkElement f) return;
-        if (_place != IslandFace.Claude) _openH = OpenH;
+        if (_dropping) _openH = OpenH; // the drop face keeps the standard height
+        else if (_place == IslandFace.Shelf) _openH = Math.Clamp(Math.Ceiling(_shelf.ContentHeight) + BandH + 2 + 8, OpenH, MaxH);
+        else if (_place != IslandFace.Claude) _openH = OpenH;
         else
         {
             f.Measure(new Size(OpenW - 44, double.PositiveInfinity));
@@ -212,6 +258,8 @@ public partial class IslandWindow : Window, IIslandHost
         if (_open) return;
         _open = true;
         FaceKeys(true);
+        _media.Web.SetOpen(true);
+        _shelf.SetPanelHovered(true); ShelfStore.Current.Prune(); // gone files leave as the panel opens
         if (Claude.NeedsAttention) ShowPlace(IslandFace.Claude, animate: false);
         Retarget();
         foreach (var s in new[] { _w, _h, _top, _bottom }) s.Use(IslandMotion.Open.R, IslandMotion.Open.D);
@@ -228,6 +276,8 @@ public partial class IslandWindow : Window, IIslandHost
         if (!_open) return;
         _open = false;
         FaceKeys(false);
+        _media.Web.SetOpen(false);
+        EndDrop(); _shelf.SetPanelHovered(false);
         _collapseOrigin = new Size(_w.Value, _h.Value); // the taper runs between these
         _w.Use(IslandMotion.CollapseWidth.R, IslandMotion.CollapseWidth.D);
         _h.Use(IslandMotion.CollapseHeight.R, IslandMotion.CollapseHeight.D);
@@ -243,6 +293,7 @@ public partial class IslandWindow : Window, IIslandHost
         double t = _clock.Elapsed.TotalSeconds, dt = Math.Clamp(t - _lastT, 0, 0.05);
         _lastT = t;
         if (!CarryFrame(t)) Track(t);
+        ClaudeKeysFrame(t);
         foreach (var sp in new[] { _w, _h, _top, _bottom, _swellW, _swellH, _lean, _page, _pop }) sp.Step(dt);
         Draw();
     }
@@ -283,7 +334,8 @@ public partial class IslandWindow : Window, IIslandHost
         {
             var stay = new Rect(r.Left - StaySide, r.Top - (_anchorBottom ? StayBottom : StayTop), r.Width + StaySide * 2, r.Height + StayTop + StayBottom);
             bool dragging = down && stay.Contains(_dragFrom); // a drag that started on the panel (the scrubber) keeps it open
-            if (!stay.Contains(p) && !_keyboard && !_hold && !dragging) Close_();
+            // a drag out of the shelf holds the panel until it's over
+            if (!stay.Contains(p) && !_keyboard && !_hold && !dragging && !ShelfView.DraggingOut) Close_();
         }
         if (!down) _dragFrom = p;
     }
@@ -334,7 +386,7 @@ public partial class IslandWindow : Window, IIslandHost
         ExpandedRoot.IsHitTestVisible = _open && openOpacity > 0.5;
         if (!_open && openOpacity <= 0 && _w.Settled) ExpandedRoot.Visibility = Visibility.Hidden;
 
-        CollapsedRow.Opacity = pillOpacity;
+        CollapsedRow.Opacity = pillOpacity * ToastFadeAlpha(_lastT);
         CollapsedRow.Visibility = pillOpacity > 0 ? Visibility.Visible : Visibility.Hidden;
         Canvas.SetLeft(CollapsedRow, (r.Width - CollapsedRow.DesiredSize.Width) / 2);
         Canvas.SetTop(CollapsedRow, (Math.Min(r.Height, CollapsedH + _swellH.Value) - CollapsedH) / 2);

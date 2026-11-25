@@ -150,3 +150,17 @@ does not work: with Windows Terminal the chain ends at explorer.exe.
 Spinner word: while working, read the console's visible rows (`CONOUT$`,
 `ReadConsoleOutputCharacterW`) for Claude Code's status line
 (`✽ Germinating… (16s · …)`) and show that word on the island.
+
+## Permission replies (approval extras)
+
+A `PermissionRequest` answer is the hook's whole stdout. All are compact JSON under `hookSpecificOutput`
+(`hookEventName: "PermissionRequest"`), `decision` an object:
+
+- Approve: `{"behavior":"allow"}`.
+- Approve a plan (`ExitPlanMode`): `{"behavior":"allow","updatedInput":<tool_input verbatim>}` (a bare allow is ignored).
+- Always...: `{"behavior":"allow","updatedPermissions":<permission_suggestions verbatim, re-read from the request file>}`.
+  Offered only when every suggestion decodes (`addRules` allow, `setMode`, `addDirectories`; scopes session / localSettings /
+  projectSettings / userSettings).
+- Deny: `{"behavior":"deny","message":"The user denied this tool call from the Isle notch."}`; a plan: `"The user rejected this plan from the Isle notch."`.
+  With typed words the message ends ` and said: <words>` instead of the full stop.
+- Terminal: `{}`.

@@ -5,6 +5,7 @@
     <Using Remove="System.Drawing" />
   </ItemGroup>
   <ItemGroup><PackageReference Include="NAudio.Wasapi" Version="2.2.1" /></ItemGroup>
+  <ItemGroup><None Update="Sounds\**\*" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\IsleWin.Core\IsleWin.Core.csproj" />
     <ProjectReference Include="..\IsleWin.Claude\IsleWin.Claude.csproj" />

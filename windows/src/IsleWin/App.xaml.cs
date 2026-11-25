@@ -52,9 +52,31 @@ public partial class App : Application
         menu.Items.Add("Place at top of screen", null, (_, _) => _window!.PlaceAtTop());
         menu.Items.Add("Install Claude hooks", null, (_, _) => Hooks(true));
         menu.Items.Add("Remove Claude hooks", null, (_, _) => Hooks(false));
+        // Isle's Settings, until the port has a Settings window: Pomodoro is opt-in; each sound is a switch, and
+        // switching one on plays it, as his sound rows audition by ear
+        var settings = IsleSettings.Current;
+        var pomodoro = new System.Windows.Forms.ToolStripMenuItem("Pomodoro") { CheckOnClick = true, Checked = settings.Pomodoro.Enabled };
+        pomodoro.CheckedChanged += (_, _) => { settings.Pomodoro.Enabled = pomodoro.Checked; settings.Save(); };
+        menu.Items.Add(pomodoro);
+        var sounds = new System.Windows.Forms.ToolStripMenuItem("Sounds");
+        void Sound(string title, Func<bool> get, Action<bool> set, Func<string> name)
+        {
+            var item = new System.Windows.Forms.ToolStripMenuItem(title) { CheckOnClick = true, Checked = get() };
+            item.CheckedChanged += (_, _) => { set(item.Checked); settings.Save(); if (item.Checked) Media.Sounds.Play(name()); };
+            sounds.DropDownItems.Add(item);
+        }
+        Sound("Claude alert", () => settings.Sounds.ClaudeAlertEnabled, v => settings.Sounds.ClaudeAlertEnabled = v, () => settings.Sounds.ClaudeAlert);
+        Sound("Claude done", () => settings.Sounds.ClaudeDoneEnabled, v => settings.Sounds.ClaudeDoneEnabled = v, () => settings.Sounds.ClaudeDone);
+        Sound("When a Pomodoro interval ends", () => settings.Pomodoro.SoundEnabled, v => settings.Pomodoro.SoundEnabled = v, () => settings.Pomodoro.Sound);
+        menu.Items.Add(sounds);
+        menu.Items.Add("Connect Spotify…", null, (_, _) => { if (_spotify is { IsVisible: true }) _spotify.Activate(); else (_spotify = new SpotifyConnectWindow(_window!.Media.Web)).Show(); });
         menu.Items.Add("Quit", null, (_, _) => Shutdown());
         _tray = new System.Windows.Forms.NotifyIcon { Icon = System.Drawing.Icon.FromHandle(bmp.GetHicon()), Text = "Isle", ContextMenuStrip = menu, Visible = true };
+        // the Web API's problems the user can fix (Premium needed, sign-in expired), as a tray note
+        _window!.Media.Web.Problem += m => Dispatcher.BeginInvoke(() => _tray?.ShowBalloonTip(4000, "Isle", m, System.Windows.Forms.ToolTipIcon.Info));
     }
+
+    SpotifyConnectWindow? _spotify;
 
     void Hooks(bool install)
     {

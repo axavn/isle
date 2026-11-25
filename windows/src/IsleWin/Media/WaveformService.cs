@@ -33,10 +33,11 @@ public sealed class WaveformService
     public bool HasTap => _tapOn;
 
     /// Aim at the app the island shows, from SMTC's SourceAppUserModelId ("Spotify.exe", "SpotifyAB.SpotifyMusic_...!Spotify", "chrome.exe").
-    /// null or unknown ids fall back to Spotify.
+    /// null or unknown ids fall back to Spotify. "" taps nothing (Spotify playing on another device): with no tap,
+    /// Snapshot gives the idle animation, as Isle's equalizer does when it has no audio.
     public void SetTarget(string? sourceAppId)
     {
-        string name = "Spotify";
+        string name = sourceAppId == "" ? "" : "Spotify";
         if (!string.IsNullOrWhiteSpace(sourceAppId) && !sourceAppId.Contains("spotify", StringComparison.OrdinalIgnoreCase))
         {
             string id = sourceAppId.Trim();

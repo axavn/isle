@@ -22,6 +22,14 @@ public sealed class MusicView : Grid
     readonly Border _artBox;
     readonly Marquee _title = new(IsleStyle.Headline, FontWeights.SemiBold, Brushes.White, 17);
     readonly Marquee _artist = new(IsleStyle.Meta, FontWeights.Medium, IsleStyle.White(IsleStyle.Secondary), 15);
+    /// Where it's playing, when that's another device (the Web API): the artist's size and tone, above the
+    /// title. It takes no height of its own — it rises into the empty band, level with the art's top — so the
+    /// face keeps Isle's standard 146 pt panel.
+    readonly TextBlock _device = new()
+    {
+        FontFamily = IsleStyle.Text, FontSize = IsleStyle.Meta, FontWeight = FontWeights.Medium, Foreground = IsleStyle.White(IsleStyle.Secondary),
+        Height = 15, Margin = new Thickness(0, -16, 0, 1), TextTrimming = TextTrimming.CharacterEllipsis, Visibility = Visibility.Collapsed,
+    };
     readonly Grid _bar = new() { Height = 10, Background = Brushes.Transparent, Cursor = Cursors.Hand };
     readonly Border _fill = new() { Height = 6, CornerRadius = new CornerRadius(3), Background = Brushes.White, HorizontalAlignment = HorizontalAlignment.Left, Width = 0 };
     readonly TextBlock _elapsed = Time(), _remaining = Time();
@@ -74,7 +82,7 @@ public sealed class MusicView : Grid
 
         // column: labels / 6 / scrubber / 2 / controls  (right inset leaves room for the corner waveform)
         var labels = new StackPanel { Margin = new Thickness(0, 0, 40, 0) };
-        labels.Children.Add(_title); labels.Children.Add(_artist); _artist.Margin = new Thickness(0, 1, 0, 0);
+        labels.Children.Add(_device); labels.Children.Add(_title); labels.Children.Add(_artist); _artist.Margin = new Thickness(0, 1, 0, 0);
         _playing.Children.Add(labels);
         _scrubber.Margin = new Thickness(0, 6, 0, 0); _playing.Children.Add(_scrubber);
         controls.Margin = new Thickness(0, 2, 0, 0); _playing.Children.Add(controls);
@@ -135,6 +143,8 @@ public sealed class MusicView : Grid
         _idle.Visibility = _m.HasTrack ? Visibility.Collapsed : Visibility.Visible;
         _title.Text = string.IsNullOrEmpty(_m.Title) ? "Not playing" : _m.Title;
         _artist.Text = _m.Artist;
+        _device.Text = _m.IsRemote && !string.IsNullOrEmpty(_m.DeviceName) ? "Playing on " + _m.DeviceName : "";
+        _device.Visibility = _device.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         _play.Visibility = _m.IsPlaying ? Visibility.Collapsed : Visibility.Visible;
         _pause.Visibility = _m.IsPlaying ? Visibility.Visible : Visibility.Collapsed;
         // shuffle / repeat: white when on, 35% when off; shown only where the player supports them

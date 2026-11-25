@@ -30,6 +30,10 @@
             </Setter>
         </Style>
 
+        <!-- the decision row: 8 between pills; compact (padding 10) when Always… shares the row -->
+        <Style x:Key="PillR" TargetType="Button" BasedOn="{StaticResource Pill}"><Setter Property="Margin" Value="0,0,8,0"/></Style>
+        <Style x:Key="PillC" TargetType="Button" BasedOn="{StaticResource PillR}"><Setter Property="Padding" Value="10,0"/></Style>
+
         <!-- question option: card (radius 9, white 0.07), label + description -->
         <Style x:Key="Option" TargetType="Button">
             <Setter Property="Foreground" Value="White"/><Setter Property="Cursor" Value="Hand"/><Setter Property="Focusable" Value="False"/><Setter Property="local:HoverGrow.Enabled" Value="True"/>
@@ -115,8 +119,15 @@
                        Visibility="{Binding HasAgents, Converter={StaticResource B2V}}"/>
 
             <!-- approval: the command in a card -->
-            <Border Background="#12FFFFFF" CornerRadius="9" Padding="10,6" Margin="0,4,0,0" Visibility="{Binding ShowApproval, Converter={StaticResource B2V}}">
-                <TextBlock Text="{Binding PendingSummary}" FontFamily="Cascadia Mono, Consolas" FontSize="11" Foreground="#D9FFFFFF" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="30"/>
+            <Border Background="#12FFFFFF" BorderBrush="#59FFB036" BorderThickness="1" CornerRadius="9" Padding="9,5" Margin="0,4,0,0" MinHeight="{Binding CardMinHeight}"
+                    Visibility="{Binding ShowApproval, Converter={StaticResource B2V}}">
+                <StackPanel>
+                    <local:FitText Label="{Binding CardLabel}" Text="{Binding CardText}" Lines="{Binding CardMaxLines}" Tail="{Binding CardTail}"/>
+                    <TextBlock FontFamily="Cascadia Mono, Consolas" FontSize="11" LineHeight="14" LineStackingStrategy="BlockLineHeight" TextTrimming="CharacterEllipsis"
+                               Foreground="#B3FFFFFF" Visibility="{Binding HasCardSecond, Converter={StaticResource B2V}}">
+                        <Run Text="{Binding CardSecondBold, Mode=OneWay}" FontWeight="SemiBold" Foreground="#E6FFFFFF"/><Run Text="{Binding CardSecond, Mode=OneWay}"/>
+                    </TextBlock>
+                </StackPanel>
             </Border>
 
             <!-- question: one card per option -->
@@ -143,22 +154,76 @@
 
             <!-- actions (22 high) -->
             <Grid Margin="0,6,0,0" Height="22">
-                <!-- approval: Approve / Deny / Terminal -->
-                <StackPanel Orientation="Horizontal" Visibility="{Binding ShowApproval, Converter={StaticResource B2V}}">
-                    <Button Style="{StaticResource Pill}" Command="{Binding Allow}" Background="#D934C759">
-                        <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE73E;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="10" VerticalAlignment="Center" Margin="0,0,6,0"/><TextBlock Text="Approve"/></StackPanel>
-                    </Button>
-                    <Button Style="{StaticResource Pill}" Command="{Binding Deny}" Background="#D9FF3B30">
-                        <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE711;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="10" VerticalAlignment="Center" Margin="0,0,6,0"/><TextBlock Text="Deny"/></StackPanel>
-                    </Button>
-                    <Button Style="{StaticResource Pill}" Command="{Binding Jump}">
-                        <StackPanel Orientation="Horizontal">
-                            <Path Data="M7,3 H17 A4,4 0 0 1 21,7 V17 A4,4 0 0 1 17,21 H7 A4,4 0 0 1 3,17 V7 A4,4 0 0 1 7,3 Z M9.5,14.5 L15,9 M10.5,9 H15 V13.5" Stroke="White" StrokeThickness="2.2"
-                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Stretch="Uniform" Width="12" Height="12" Margin="0,0,7,0"/>
-                            <TextBlock Text="{Binding JumpLabel}"/>
-                        </StackPanel>
-                    </Button>
-                </StackPanel>
+                <!-- approval: Approve / Always… / Deny / reason / Terminal; the review: Confirm / Back; or the deny-with-reason field -->
+                <Grid Visibility="{Binding ShowApproval, Converter={StaticResource B2V}}">
+                    <Grid.Style><Style TargetType="Grid"><Style.Triggers>
+                        <DataTrigger Binding="{Binding IsAnswering}" Value="True"><Setter Property="Opacity" Value="0.5"/><Setter Property="IsEnabled" Value="False"/></DataTrigger>
+                    </Style.Triggers></Style></Grid.Style>
+                    <StackPanel Orientation="Horizontal" Visibility="{Binding ShowPlainRow, Converter={StaticResource B2V}}">
+                        <Button Command="{Binding Allow}" Background="#D934C759">
+                            <Button.Style><Style TargetType="Button" BasedOn="{StaticResource PillR}"><Style.Triggers>
+                                <DataTrigger Binding="{Binding CanRemember}" Value="True"><Setter Property="Padding" Value="10,0"/></DataTrigger>
+                            </Style.Triggers></Style></Button.Style>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE73E;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="10" VerticalAlignment="Center" Margin="0,0,6,0">
+                                    <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><DataTrigger Binding="{Binding CanRemember}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+                                </TextBlock>
+                                <TextBlock Text="Approve"/>
+                            </StackPanel>
+                        </Button>
+                        <Button Style="{StaticResource PillC}" Command="{Binding Always}" Background="#4D34C759" Visibility="{Binding ShowAlways, Converter={StaticResource B2V}}">
+                            <TextBlock Text="Always…"/>
+                        </Button>
+                        <Button Command="{Binding Deny}" Background="#D9FF3B30">
+                            <Button.Style><Style TargetType="Button" BasedOn="{StaticResource PillR}"><Style.Triggers>
+                                <DataTrigger Binding="{Binding CanRemember}" Value="True"><Setter Property="Padding" Value="10,0"/></DataTrigger>
+                            </Style.Triggers></Style></Button.Style>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE711;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="10" VerticalAlignment="Center" Margin="0,0,6,0">
+                                    <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><DataTrigger Binding="{Binding CanRemember}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+                                </TextBlock>
+                                <TextBlock Text="Deny"/>
+                            </StackPanel>
+                        </Button>
+                        <Button Style="{StaticResource PillR}" Command="{Binding BeginDeny}" Background="#4DFF3B30" ToolTip="No, and tell Claude…">
+                            <TextBlock Text="&#xE8BD;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12" VerticalAlignment="Center"/>
+                        </Button>
+                        <Button Style="{StaticResource PillR}" Command="{Binding AnswerInTerminal}" Margin="0" ToolTip="Terminal">
+                            <StackPanel Orientation="Horizontal">
+                                <Path Data="M7,3 H17 A4,4 0 0 1 21,7 V17 A4,4 0 0 1 17,21 H7 A4,4 0 0 1 3,17 V7 A4,4 0 0 1 7,3 Z M9.5,14.5 L15,9 M10.5,9 H15 V13.5" Stroke="White" StrokeThickness="2.2"
+                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Stretch="Uniform" Width="12" Height="12">
+                                    <Path.Style><Style TargetType="Path"><Setter Property="Margin" Value="0"/><Style.Triggers><DataTrigger Binding="{Binding ShowTerminalWord}" Value="True"><Setter Property="Margin" Value="0,0,7,0"/></DataTrigger></Style.Triggers></Style></Path.Style>
+                                </Path>
+                                <TextBlock Text="{Binding JumpLabel}" Visibility="{Binding ShowTerminalWord, Converter={StaticResource B2V}}"/>
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Visibility="{Binding IsReviewing, Converter={StaticResource B2V}}">
+                        <Button Style="{StaticResource PillR}" Command="{Binding ConfirmAlways}" Background="#D934C759">
+                            <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE73E;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="10" VerticalAlignment="Center" Margin="0,0,6,0"/><TextBlock Text="Confirm"/></StackPanel>
+                        </Button>
+                        <Button Style="{StaticResource PillR}" Command="{Binding BackAlways}">
+                            <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE76B;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="10" VerticalAlignment="Center" Margin="0,0,6,0"/><TextBlock Text="Back"/></StackPanel>
+                        </Button>
+                    </StackPanel>
+                    <Border Background="#14FFFFFF" BorderBrush="#66FFFFFF" BorderThickness="1" CornerRadius="11" MinHeight="22" Visibility="{Binding IsDenying, Converter={StaticResource B2V}}">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Style="{StaticResource Pill}" Command="{Binding SubmitDeny}" Background="#D9FF3B30" Height="18" Padding="9,0" Margin="0,0,1,0" VerticalAlignment="Bottom"
+                                    IsEnabled="{Binding CanSendDenial}">
+                                <StackPanel Orientation="Horizontal"><TextBlock Text="Deny"/><TextBlock Text="&#xE751;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="9.5" FontWeight="Bold" VerticalAlignment="Center" Margin="4,0,0,0"/></StackPanel>
+                            </Button>
+                            <Grid>
+                                <TextBox x:Name="DenyBox" Text="{Binding DenialText, UpdateSourceTrigger=PropertyChanged}" Background="Transparent" BorderThickness="0" Foreground="White" CaretBrush="White"
+                                         FontSize="12" Padding="9,0,6,0" VerticalContentAlignment="Center" IsVisibleChanged="OnDenyVisible"
+                                         GotKeyboardFocus="OnFocus" LostKeyboardFocus="OnLostFocus" PreviewMouseDown="OnMouseDown" PreviewKeyDown="OnDenyKey"/>
+                                <TextBlock Text="{Binding DenyPlaceholder}" FontSize="12" Foreground="#66FFFFFF" Margin="11,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False" TextTrimming="CharacterEllipsis">
+                                    <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=DenyBox}" Value=""><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+                                </TextBlock>
+                            </Grid>
+                        </DockPanel>
+                    </Border>
+                </Grid>
                 <!-- question: Answer in terminal / Type something / Next-Done, or the typed-answer box -->
                 <Grid Visibility="{Binding ShowQuestion, Converter={StaticResource B2V}}">
                     <StackPanel Orientation="Horizontal" Visibility="{Binding ShowQuestionPills, Converter={StaticResource B2V}}">

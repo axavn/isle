@@ -1,24 +1,36 @@
 using System.IO;
+using System.Net.Http;
 using System.ComponentModel;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Windows.Media;
 using Windows.Media.Control;
+using IsleWin.Core;
 
 namespace IsleWin.Media;
 
-/// Spotify (preferred) or the current SMTC session. All state is touched on the UI thread only.
+/// Spotify (preferred) or the current SMTC session; and, when connected, Spotify playing on another device
+/// (a phone, a speaker) through the Web API. This PC wins whenever it's the one playing. All state is touched
+/// on the UI thread only.
 public sealed class MediaService : INotifyPropertyChanged
 {
     public event PropertyChangedEventHandler? PropertyChanged;
     readonly Dispatcher _ui = Dispatcher.CurrentDispatcher;
     readonly DispatcherTimer _debounce;
     readonly Dictionary<string, BitmapImage> _art = new();
+    static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(10) };
     GlobalSystemMediaTransportControlsSessionManager? _mgr;
     GlobalSystemMediaTransportControlsSession? _session;
+    SpotifyPlayback? _remote;
     bool _refreshing, _again;
     TimeSpan _pos; DateTimeOffset _posAt;
 
+    /// The Spotify Web API: what the account plays on other devices. Off until connected from the tray menu.
+    public SpotifyWeb Web { get; } = new();
+    /// True while what's shown is Spotify on another device; the controls then go through the Web API.
+    public bool IsRemote { get; private set; }
+    /// That device's name ("iPhone", "Kitchen speaker") for the line above the title; null when playing here.
+    public string? DeviceName { get; private set; }
     public bool HasTrack { get; private set; }
     public string Title { get; private set; } = "";
     public string Artist { get; private set; } = "";
@@ -49,6 +61,12 @@ public sealed class MediaService : INotifyPropertyChanged
             _mgr.SessionsChanged += (_, _) => Poke();
             _mgr.CurrentSessionChanged += (_, _) => Poke();
             await Refresh();
+        }
+        catch (Exception e) { App.Log(e); }
+        try
+        {
+            Web.Changed += r => _ui.BeginInvoke(() => { _remote = r; Poke(); });
+            Web.Start();
         }
         catch (Exception e) { App.Log(e); }
     }
@@ -82,10 +100,14 @@ public sealed class MediaService : INotifyPropertyChanged
         {
             if (_session != null) { _session.MediaPropertiesChanged -= OnProps; _session.PlaybackInfoChanged -= OnPlayback; _session.TimelinePropertiesChanged -= OnTimeline; }
             _session = s;
-            SourceAppId = s?.SourceAppUserModelId;
             if (s != null) { s.MediaPropertiesChanged += OnProps; s.PlaybackInfoChanged += OnPlayback; s.TimelinePropertiesChanged += OnTimeline; }
         }
-        if (s == null) { Apply(false, "", "", "", null, false, default, false, false, default, false); return; }
+        if (s == null)
+        {
+            Web.SetLocalPlaying(false);
+            if (_remote != null && !IsThisPc(_remote)) { await ApplyRemote(_remote); return; }
+            Local(null); Apply(false, "", "", "", null, false, default, false, false, default, false); return;
+        }
 
         var props = await s.TryGetMediaPropertiesAsync();
         var pb = s.GetPlaybackInfo();
@@ -113,9 +135,44 @@ public sealed class MediaService : INotifyPropertyChanged
         }
         var has = !string.IsNullOrEmpty(props.Title) || !string.IsNullOrEmpty(props.Artist);
         var playing = pb.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
+
+        // An account plays on one device at a time: while Spotify plays here the Web API has nothing to add (and
+        // isn't asked). Otherwise Spotify playing elsewhere is shown, or paused elsewhere when nothing is here.
+        Web.SetLocalPlaying(playing && s.SourceAppUserModelId.Contains("spotify", StringComparison.OrdinalIgnoreCase));
+        if (_remote is { } r && !IsThisPc(r) && ((r.IsPlaying && !playing) || !has)) { await ApplyRemote(r); return; }
+
+        Local(s.SourceAppUserModelId);
         _pos = tl.Position; _posAt = tl.LastUpdatedTime;
         Apply(has, props.Title, props.Artist, props.AlbumTitle, art, playing, tl.EndTime - tl.StartTime,
               pb.IsShuffleActive ?? false, pb.Controls.IsShuffleEnabled, pb.AutoRepeatMode ?? MediaPlaybackAutoRepeatMode.None, pb.Controls.IsRepeatEnabled);
+    }
+
+    void Local(string? sourceAppId) { IsRemote = false; DeviceName = null; SourceAppId = sourceAppId; }
+
+    /// The Web API lists this PC among the devices too; what plays here comes from SMTC, which is instant.
+    static bool IsThisPc(SpotifyPlayback r) =>
+        r.DeviceType.Equals("Computer", StringComparison.OrdinalIgnoreCase) && r.DeviceName.Equals(Environment.MachineName, StringComparison.OrdinalIgnoreCase);
+
+    async Task ApplyRemote(SpotifyPlayback r)
+    {
+        BitmapImage? art = null;
+        if (r.ArtUrl is { } url && !_art.TryGetValue(url, out art))
+        {
+            try
+            {
+                var bytes = await Http.GetByteArrayAsync(url);
+                var bi = new BitmapImage();
+                bi.BeginInit(); bi.CacheOption = BitmapCacheOption.OnLoad; bi.DecodePixelWidth = 360; bi.StreamSource = new MemoryStream(bytes); bi.EndInit(); bi.Freeze();
+                if (_art.Count > 20) _art.Clear();
+                _art[url] = art = bi;
+            }
+            catch (Exception e) { App.Log(e); }
+        }
+        IsRemote = true; DeviceName = r.DeviceName;
+        SourceAppId = ""; // nothing to tap here: the equalizer runs its idle animation
+        _pos = r.Progress; _posAt = r.FetchedAt;
+        var repeat = r.Repeat switch { "context" => MediaPlaybackAutoRepeatMode.List, "track" => MediaPlaybackAutoRepeatMode.Track, _ => MediaPlaybackAutoRepeatMode.None };
+        Apply(true, r.Title, r.Artist, r.Album, art, r.IsPlaying, r.Duration, r.Shuffle, true, repeat, true);
     }
 
     void Apply(bool has, string title, string artist, string album, BitmapImage? art, bool playing, TimeSpan dur,
@@ -128,19 +185,21 @@ public sealed class MediaService : INotifyPropertyChanged
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(null));
     }
 
-    public void PlayPause() { if (_session != null) _ = _session.TryTogglePlayPauseAsync(); }
-    public void Next() { if (_session != null) _ = _session.TrySkipNextAsync(); }
-    public void Previous() { if (_session != null) _ = _session.TrySkipPreviousAsync(); }
-    public void ToggleShuffle() { if (_session != null) _ = _session.TryChangeShuffleActiveAsync(!Shuffle); }
+    // The controls go to whatever is shown: this PC's session, or the other device through the Web API.
+    public void PlayPause() { if (IsRemote) Web.PlayPause(); else if (_session != null) _ = _session.TryTogglePlayPauseAsync(); }
+    public void Next() { if (IsRemote) Web.Next(); else if (_session != null) _ = _session.TrySkipNextAsync(); }
+    public void Previous() { if (IsRemote) Web.Previous(); else if (_session != null) _ = _session.TrySkipPreviousAsync(); }
+    public void ToggleShuffle() { if (IsRemote) Web.SetShuffle(!Shuffle); else if (_session != null) _ = _session.TryChangeShuffleActiveAsync(!Shuffle); }
     public void CycleRepeat()
     {
         var next = Repeat switch { MediaPlaybackAutoRepeatMode.None => MediaPlaybackAutoRepeatMode.List, MediaPlaybackAutoRepeatMode.List => MediaPlaybackAutoRepeatMode.Track, _ => MediaPlaybackAutoRepeatMode.None };
-        if (_session != null) _ = _session.TryChangeAutoRepeatModeAsync(next);
+        if (IsRemote) Web.SetRepeat(next switch { MediaPlaybackAutoRepeatMode.List => "context", MediaPlaybackAutoRepeatMode.Track => "track", _ => "off" });
+        else if (_session != null) _ = _session.TryChangeAutoRepeatModeAsync(next);
     }
     public void Seek(TimeSpan t)
     {
-        if (_session == null) return;
+        if (!IsRemote && _session == null) return;
         _pos = t; _posAt = DateTimeOffset.Now;
-        _ = _session.TryChangePlaybackPositionAsync(t.Ticks);
+        if (IsRemote) Web.Seek(t); else _ = _session!.TryChangePlaybackPositionAsync(t.Ticks);
     }
 }

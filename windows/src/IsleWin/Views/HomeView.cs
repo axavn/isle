@@ -34,12 +34,43 @@ public sealed class HomeView : Grid
         _artBox = new Border { Width = Lead, Height = Lead, Child = _art, HorizontalAlignment = HorizontalAlignment.Left, Clip = new RectangleGeometry(new Rect(0, 0, Lead, Lead), 5, 5) };
         _musicTile = Tile(_artBox, "Music", _m1, _m2, IslandFace.Music);
         _claudeTile = Tile(_dots, "Claude", _c1, _c2, IslandFace.Claude);
-        SetColumn(_claudeTile, 2);
-        Children.Add(_musicTile); Children.Add(_claudeTile);
+        _tiles[IslandFace.Music] = _musicTile; _tiles[IslandFace.Claude] = _claudeTile;
+        ShowFaces(new[] { IslandFace.Music, IslandFace.Claude });
 
         media.PropertyChanged += (_, _) => Refresh();
         claude.PropertyChanged += (_, _) => Refresh();
         Refresh();
+    }
+
+    readonly Dictionary<IslandFace, Border> _tiles = new();
+
+    /// One tile per face on offer, in the swipe's order, sharing the row equally (Isle's HomeGridView).
+    public void ShowFaces(IReadOnlyList<IslandFace> faces)
+    {
+        Children.Clear(); ColumnDefinitions.Clear();
+        int col = 0;
+        foreach (var f in faces)
+        {
+            if (!_tiles.TryGetValue(f, out var tile)) continue;
+            if (col > 0) ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Gap) });
+            ColumnDefinitions.Add(new ColumnDefinition());
+            SetColumn(tile, ColumnDefinitions.Count - 1);
+            Children.Add(tile);
+            col++;
+        }
+    }
+
+    /// A face's tile from outside (Pomodoro, Shelf): its lead, title, and a glance of up to two lines that's
+    /// re-read whenever `source` changes. An empty glance shows the title alone, as Isle's nil glance does.
+    /// Returns the tile's refresh, for a source that isn't INotifyPropertyChanged.
+    public Action AddTile(IslandFace face, FrameworkElement lead, string title, Func<(string L1, string L2)> glance, System.ComponentModel.INotifyPropertyChanged? source)
+    {
+        TextBlock l1 = Line1(), l2 = Line2();
+        void Update() { var (a, b) = glance(); l1.Text = a; l2.Text = b; l1.Visibility = a.Length > 0 ? Visibility.Visible : Visibility.Collapsed; l2.Visibility = b.Length > 0 ? Visibility.Visible : Visibility.Collapsed; }
+        _tiles[face] = Tile(lead, title, l1, l2, face);
+        if (source != null) source.PropertyChanged += (_, _) => Update();
+        Update();
+        return Update;
     }
 
     static TextBlock Line1() => new() { FontFamily = IsleStyle.Text, FontSize = IsleStyle.Body, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White, TextTrimming = TextTrimming.CharacterEllipsis };

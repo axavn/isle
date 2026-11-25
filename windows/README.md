@@ -22,6 +22,12 @@ doing. It expands on hover and folds away when you leave.
 - A six-bar equalizer that reacts to the audio. It taps only the player's own process (Spotify by default).
 - Colours taken from the cover art.
 - Works with Spotify and any other player that uses Windows media controls (SMTC).
+- Optional: Spotify playing on another device (your phone, a speaker) through the Spotify Web API, with
+  "Playing on <device>" above the title and the equalizer's idle animation. Tray menu, **Connect Spotify…**:
+  make a free app at the [Spotify developer dashboard](https://developer.spotify.com/dashboard) (owning one
+  needs Premium), add the redirect URI `http://127.0.0.1:43827/callback`, tick Web API, and paste its
+  Client ID. Spotify limits such an app to its owner plus 5 people, so everyone uses their own. Controlling
+  another device needs Premium. This PC's own playback always wins and needs none of this.
 
 ### Claude Code face
 
@@ -98,5 +104,8 @@ The file protocol is in [docs/PROTOCOL.md](docs/PROTOCOL.md).
 - **Audio** uses Windows process loopback, not a system-wide tap.
 - **Players** come from SMTC, not AppleScript, so more players work.
 - **Replies** are typed into the session's console with `WriteConsoleInput`. No clipboard, no focus change.
-- **Not ported yet:** the Settings window, Pomodoro, Agenda, Shelf, Glass and Prism styles, toasts and sounds,
-  output-device picker, updater. See [ROADMAP.md](ROADMAP.md).
+- **Shortcuts:** Deny is Ctrl+Shift+' because Windows keeps Ctrl+Esc for Start. Approve (Ctrl+') and the
+  options (Alt+1–4) are his.
+- **Drop face:** no AirDrop target. The island reacts once a file drag reaches it.
+- **Not ported yet:** the Settings window (Pomodoro and sounds are switched from the tray), Agenda, Glass and
+  Prism styles, battery and calendar toasts, output-device picker, updater. See [ROADMAP.md](ROADMAP.md).

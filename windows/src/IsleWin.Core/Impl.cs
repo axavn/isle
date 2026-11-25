@@ -211,6 +211,13 @@ public static class RequestStore
     public static void WriteResponse(IslePaths paths, string requestId, string json) =>
         AtomicFile.WriteAllText(Path.Combine(paths.Requests, requestId + ".response.json"), json);
 
+    /// The whole hook payload of a request, re-read from its file (a deep copy).
+    public static JsonObject? ReadPayload(PendingRequest request)
+    {
+        try { return J.TryParse(AtomicFile.ReadAllText(request.FilePath))?["payload"] is JsonObject o ? (JsonObject)o.DeepClone() : null; }
+        catch { return null; }
+    }
+
     public static JsonObject? ReadToolInput(PendingRequest request)
     {
         try { return J.TryParse(AtomicFile.ReadAllText(request.FilePath))?["payload"]?["tool_input"] is JsonObject o ? (JsonObject)o.DeepClone() : null; }
@@ -229,6 +236,28 @@ public static class ResponseBuilder
     {
         ["hookEventName"] = "PermissionRequest", ["decision"] = new JsonObject { ["behavior"] = "deny", ["message"] = message }
     } }.ToJsonString();
+
+    static readonly JsonSerializerOptions CompactJson = new() { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
+    static string Decision(JsonObject decision) => new JsonObject { ["hookSpecificOutput"] = new JsonObject
+    {
+        ["hookEventName"] = "PermissionRequest", ["decision"] = decision
+    } }.ToJsonString(CompactJson);
+
+    /// Approving a plan: Claude Code ignores a bare allow for ExitPlanMode; the tool input must come back as `updatedInput`.
+    public static string AllowPlan(JsonObject toolInput) =>
+        Decision(new JsonObject { ["behavior"] = "allow", ["updatedInput"] = toolInput.DeepClone() });
+
+    /// "Always...": allow, and hand Claude Code's own `permission_suggestions` back verbatim as `updatedPermissions`.
+    public static string AllowAlways(JsonNode suggestions) =>
+        Decision(new JsonObject { ["behavior"] = "allow", ["updatedPermissions"] = suggestions.DeepClone() });
+
+    /// The message Claude is told on a denial: attributed, with the user's words when they typed some.
+    public static string DenyMessage(bool isPlan, string? words = null)
+    {
+        var s = isPlan ? "The user rejected this plan from the Isle notch" : "The user denied this tool call from the Isle notch";
+        return words?.Trim() is { Length: > 0 } w ? $"{s} and said: {w}" : s + ".";
+    }
 
     /// No decision: the hook prints this, and Claude Code shows its own prompt.
     public static string Terminal() => "{}";

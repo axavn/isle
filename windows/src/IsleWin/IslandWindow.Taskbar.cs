@@ -291,7 +291,7 @@ public partial class IslandWindow
         Canvas.SetLeft(Body, 0); Canvas.SetTop(Body, 0); Body.Width = Width; Body.Height = Height; Body.Clip = clip;
 
         // the pill keeps its content; the panel's fades in with it
-        CollapsedRow.Opacity = 1; CollapsedRow.Visibility = Visibility.Visible;
+        CollapsedRow.Opacity = ToastFadeAlpha(_lastT); CollapsedRow.Visibility = Visibility.Visible;
         Canvas.SetLeft(CollapsedRow, pill.Left + (pill.Width - CollapsedRow.DesiredSize.Width) / 2);
         Canvas.SetTop(CollapsedRow, pill.Top + (pill.Height - CollapsedH) / 2);
 

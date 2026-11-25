@@ -9,7 +9,14 @@ namespace IsleWin.Core;
 
 public enum ClaudeState { Disconnected, Idle, Working, NeedsApproval, NeedsQuestion, WaitingInput, Done, Failed, Compacting }
 
-public enum IslandFace { Music, Claude }
+/// The island's faces, in Isle's `availableTabs` order (the Home grid's and the swipe's): Music, Claude,
+/// Pomodoro (opt-in), Shelf (only while it holds something). Home is the absence of a face.
+public enum IslandFace { Music, Claude, Pomodoro, Shelf }
+
+/// A toast on the collapsed pill (IslandToast.swift): a glyph and a few words in place of the pill's
+/// content for 4 s. A toast of the same `Kind` replaces the one showing; others queue (2 at most).
+/// `Glyph` is a Segoe Fluent Icons character (IsleStyle); `Tint` a "#RRGGBB" for glyph and text, null = white.
+public sealed record IslandToast(string Kind, string Text, string Glyph, string? Tint = null);
 
 /// Implemented by the app's island window; used by the Claude UI.
 public interface IIslandHost
@@ -17,6 +24,7 @@ public interface IIslandHost
     void RequestKeyboard(bool wantsKeyboard);
     void RequestOpen(bool open);
     void ShowFace(IslandFace face);
+    void Toast(IslandToast toast);
 }
 
 /// Every path the bridge uses. `Default` is the real user profile; tests pass a temp folder.

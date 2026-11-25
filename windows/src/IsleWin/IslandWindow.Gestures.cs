@@ -31,9 +31,43 @@ public partial class IslandWindow
     bool _swiping; int _swipeBase; double _swipeOffset, _swipeVel, _lastSwipeT;
     DispatcherTimer? _swipeEnd;
 
-    static int IndexOf(IslandFace? p) => p switch { IslandFace.Music => 1, IslandFace.Claude => 2, _ => 0 };
-    static IslandFace? PlaceAt(int i) => i switch { 1 => IslandFace.Music, 2 => IslandFace.Claude, _ => null };
-    FrameworkElement FaceAt(int i) => i switch { 1 => _music, 2 => _claudeFace, _ => _home };
+    // The pages, Home first, then Isle's `availableTabs`: Music, Claude, Pomodoro (when it's on), Shelf (while it
+    // holds something). The swipe and the Home row walk this order, with no wrap.
+    readonly List<IslandFace?> _order = new() { null, IslandFace.Music, IslandFace.Claude };
+    readonly Dictionary<IslandFace, FrameworkElement> _faceViews = new();
+    int Last => _order.Count - 1;
+    int IndexOf(IslandFace? p) => Math.Max(0, _order.IndexOf(p));
+    IslandFace? PlaceAt(int i) => _order[Math.Clamp(i, 0, Last)];
+    FrameworkElement FaceAt(int i) => PlaceAt(i) is { } f && _faceViews.TryGetValue(f, out var v) ? v : _home;
+
+    /// A face comes or goes (Pomodoro switched on or off, the shelf filled or emptied). A face that goes while
+    /// it's on show falls back to Home, as Isle's `expandedPlace` does.
+    void SetFaceAvailable(IslandFace face, bool available)
+    {
+        bool has = _order.Contains(face);
+        if (available == has) return;
+        if (available)
+        {
+            // keep Isle's order: insert before the first face that comes after it
+            int at = _order.FindIndex(1, f => f is { } g && g > face);
+            _order.Insert(at < 0 ? _order.Count : at, face);
+        }
+        else
+        {
+            _order.Remove(face);
+            if (_faceViews.TryGetValue(face, out var v)) v.Visibility = Visibility.Hidden;
+        }
+        _home.ShowFaces(_order.Skip(1).Cast<IslandFace>().ToList());
+        if (_place == face && !available) ShowPlace(null, animate: false);
+        else { _page.Snap(IndexOf(_place)); LayoutPages(); }
+    }
+
+    void AddFaceView(IslandFace face, FrameworkElement view)
+    {
+        _faceViews[face] = view;
+        view.Visibility = Visibility.Hidden; view.RenderTransform = new TranslateTransform();
+        Faces.Children.Add(view);
+    }
 
     // ---- a mouse: the back / forward buttons, Alt+← / Alt+→ (Isle's ⌥← ⌥→), and a sideways drag ----
     const int WM_HOTKEY = 0x0312, HotPrev = 0x1517, HotNext = 0x1518, MOD_ALT = 0x1, MOD_NOREPEAT = 0x4000, VK_LEFT = 0x25, VK_RIGHT = 0x27;
@@ -45,7 +79,7 @@ public partial class IslandWindow
     /// One face back or forward, as the mouse's side buttons and the arrow keys step.
     void Step(int by)
     {
-        int at = IndexOf(_place), to = Math.Clamp(at + by, 0, 2);
+        int at = IndexOf(_place), to = Math.Clamp(at + by, 0, Last);
         if (to != at) ShowPlace(PlaceAt(to));
     }
 
@@ -96,13 +130,14 @@ public partial class IslandWindow
         _dragLastX = c.X; _dragLastT = t;
         double target = _swipeBase + _swipeOffset;
         if (target < 0) target = -Math.Min(0.12, -target * 0.25); // rubber band past the ends
-        else if (target > 2) target = 2 + Math.Min(0.12, (target - 2) * 0.25);
+        else if (target > Last) target = Last + Math.Min(0.12, (target - Last) * 0.25);
         _page.Use(FollowSpring.R, FollowSpring.D);
         _page.Target = target;
     }
 
     IntPtr WndProc(IntPtr hwnd, int msg, IntPtr w, IntPtr l, ref bool handled)
     {
+        if (msg == WM_HOTKEY && ClaudeKeyPressed(w.ToInt32())) { handled = true; return IntPtr.Zero; }
         if (msg == WM_HOTKEY && w.ToInt32() is HotPrev or HotNext)
         {
             if (_open && !_carrying) Step(w.ToInt32() == HotPrev ? -1 : 1);
@@ -128,7 +163,7 @@ public partial class IslandWindow
         // a wheel notch (a mouse, not a touchpad) is one face, at once
         if (!_swiping && Math.Abs(delta) >= 120 && delta % 120 == 0)
         {
-            int to = Math.Clamp(at + Math.Sign(delta), 0, 2);
+            int to = Math.Clamp(at + Math.Sign(delta), 0, Last);
             if (to != at) ShowPlace(PlaceAt(to));
             return;
         }
@@ -142,7 +177,7 @@ public partial class IslandWindow
 
         double target = _swipeBase + _swipeOffset;
         if (target < 0) target = -Math.Min(0.12, -target * 0.25); // rubber band past the ends
-        else if (target > 2) target = 2 + Math.Min(0.12, (target - 2) * 0.25);
+        else if (target > Last) target = Last + Math.Min(0.12, (target - Last) * 0.25);
         _page.Use(FollowSpring.R, FollowSpring.D);
         _page.Target = target;
 
@@ -161,19 +196,22 @@ public partial class IslandWindow
         int to = _swipeBase;
         if (_swipeOffset > SwipeCommit || (_swipeOffset > 0.05 && _swipeVel > FlickSpeed)) to++;
         else if (_swipeOffset < -SwipeCommit || (_swipeOffset < -0.05 && _swipeVel < -FlickSpeed)) to--;
-        to = Math.Clamp(to, 0, 2);
+        to = Math.Clamp(to, 0, Last);
         ShowPlace(PlaceAt(to));
     }
 
     void LayoutPages()
     {
         int current = IndexOf(_place);
-        for (int i = 0; i < 3; i++)
+        // the drop face stands in for every page while a file drag is over the island
+        var dv = _dropping ? Visibility.Visible : Visibility.Hidden;
+        if (_dropFace != null && _dropFace.Visibility != dv) _dropFace.Visibility = dv;
+        for (int i = 0; i <= Last; i++)
         {
             var f = FaceAt(i);
             double d = i - _page.Value;
             ((TranslateTransform)f.RenderTransform).X = d * OpenW;
-            var v = Math.Abs(d) < 0.999 ? Visibility.Visible : Visibility.Hidden;
+            var v = !_dropping && Math.Abs(d) < 0.999 ? Visibility.Visible : Visibility.Hidden;
             if (f.Visibility != v) f.Visibility = v;
             f.IsHitTestVisible = i == current && !_swiping;
         }

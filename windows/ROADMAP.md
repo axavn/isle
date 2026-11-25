@@ -22,19 +22,27 @@ Compared with Isle for macOS v1.3.2. Grouped by what you would notice first.
 - Mouse back / forward buttons and Alt+Left / Alt+Right step faces. A quick sideways drag pages.
 - Hover-grow of controls (his 1.3.2): Claude buttons, Home tiles, music keys, home mark.
 - Home mark restyled like his NotchCrumb.
-- 41 tests passing.
+- Faces are a list in his order (Home, Music, Claude, Pomodoro, Shelf); Home lays out one tile per face.
+- Pomodoro face, Home glance and pill seat (opt-in from the tray). Not live-verified.
+- Shelf (references only, 10 max, `~/.isle/shelf.json`) and the file-drop face: Keep on shelf, Start Claude
+  here. Not live-verified.
+- Toasts on the pill (4 s, queue of 2, shortcut slot) and sounds (his four files; Claude alert / done off,
+  Pomodoro on). Not live-verified.
+- Plan approval (allow + `updatedInput`), "Always…" with `updatedPermissions`, deny with a typed reason,
+  his approval card and "Plan ready" card. Not live-verified.
+- Claude shortcuts: Ctrl+' approve, Ctrl+Shift+' deny (Windows keeps Ctrl+Esc), Alt+1–4 options.
+- 93 tests passing.
 
 ## Next
 
 Biggest first.
 
-- **Settings window and store.** Most missing toggles hang on it. Today only `island.json` exists.
-- **Pomodoro, Shelf and Agenda faces.** Home has two tiles only.
-- **Toasts and sounds.** A small pill message after Approve / Deny / Answer. Alert and done sounds.
-- **Plan approval** (ExitPlanMode as "Plan ready"), **"Always allow"** with `updatedPermissions`, **deny with
-  a typed reason.**
+- **Live checks** of session 3 and what else is untested (see `HANDOFF.md`).
+- **Settings window.** The store (`IsleSettings`, `~/.isle/settings.json`) exists; the tray's Pomodoro and
+  Sounds items stand in for the window. Pomodoro lengths and sound choices have no UI yet.
+- **Agenda face** (calendar and reminders; would need Windows' calendar APIs or Outlook/Google).
+- **Toast sources:** power, Bluetooth device battery, session done, auto-mode blocked.
 - **Track-change crossfade** (his 1.3.1).
-- **Live checks** of what is untested (see `HANDOFF.md`).
 
 ## Later
 
@@ -50,7 +58,7 @@ Claude
 - Edit / diff preview on approvals. Friendly activity line ("Editing App.swift").
 - Step trail under the working line. "Left running" leftovers after done.
 - Background sessions (`claude agents --json`). Live usage-limit countdown.
-- Keyboard shortcuts for approve, deny and options.
+- Shortcut hints on the approval buttons.
 - Accent colour for Claude-only mode. Click-out releases the text field.
 - Mode picker: Music / Claude / Both.
 
@@ -60,7 +68,6 @@ Island
 - Remember last face.
 - Power and Bluetooth battery toasts.
 - Glass, Prism and Bleed styles. Marker Editor.
-- File drop onto the island (Start Claude here, Keep on shelf).
 
 App
 - Launch at login. First-run onboarding.
@@ -82,3 +89,5 @@ App
 - Taskbar mode.
 - Reply by `WriteConsoleInput`, and the spinner word read from the console.
 - Any SMTC player, not just Spotify and Apple Music.
+- Spotify on other devices through the Web API (opt-in, bring your own Client ID): "Playing on <device>"
+  above the title, controls via the API, idle equalizer animation. Done 2026-11-25; not verified live.

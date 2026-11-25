@@ -23,9 +23,10 @@ public partial class ClaudeView : UserControl
     /// The draft stays in the box; the keyboard goes back to the window it came from.
     public void ClickOut(DependencyObject? pressed)
     {
-        if (!Reply.IsKeyboardFocused && !AnswerBox.IsKeyboardFocused) return;
+        if (!Reply.IsKeyboardFocused && !AnswerBox.IsKeyboardFocused && !DenyBox.IsKeyboardFocused) return;
         for (var d = pressed; d != null; d = d is Visual or System.Windows.Media.Media3D.Visual3D ? VisualTreeHelper.GetParent(d) : LogicalTreeHelper.GetParent(d))
-            if (d == Reply || d == AnswerBox) return;
+            if (d == Reply || d == AnswerBox || d == DenyBox) return;
+        if (DenyBox.IsKeyboardFocused) Vm?.CancelDeny.Execute(null);
         Release();
     }
 
@@ -38,6 +39,17 @@ public partial class ClaudeView : UserControl
     {
         if (e.Key == Key.Enter && Keyboard.Modifiers == ModifierKeys.None) { e.Handled = true; Vm?.SubmitTyped.Execute(null); }
         else if (e.Key == Key.Escape) { e.Handled = true; Vm?.TypeSomething.Execute(null); Release(); }
+    }
+
+    // Deny with a reason: the field takes the keyboard as it appears; Return sends, Esc lets go and keeps the draft.
+    void OnDenyVisible(object s, DependencyPropertyChangedEventArgs e)
+    {
+        if (e.NewValue is true) Dispatcher.BeginInvoke(() => { Vm?.KeyboardFocus(true); DenyBox.Focus(); DenyBox.CaretIndex = DenyBox.Text.Length; }, System.Windows.Threading.DispatcherPriority.Input);
+    }
+    void OnDenyKey(object s, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && Keyboard.Modifiers == ModifierKeys.None) { e.Handled = true; Vm?.SubmitDeny.Execute(null); Release(); }
+        else if (e.Key == Key.Escape) { e.Handled = true; Vm?.CancelDeny.Execute(null); Release(); }
     }
 
     void Release() { Keyboard.ClearFocus(); Vm?.KeyboardFocus(false); }

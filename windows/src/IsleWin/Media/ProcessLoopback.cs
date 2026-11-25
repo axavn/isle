@@ -85,6 +85,7 @@ internal sealed class ProcessLoopback : IDisposable
     /// PID of the top-level process (parent is not the same program) named `name`, or 0. Include-tree capture then covers its audio child.
     public static int FindTopLevel(string name)
     {
+        if (string.IsNullOrEmpty(name)) return 0; // no target: the player is on another device
         IntPtr snap = CreateToolhelp32Snapshot(2, 0);
         if (snap == (IntPtr)(-1)) return 0;
         try

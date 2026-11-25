@@ -36,6 +36,9 @@ public static class IsleStyle
     // Segoe Fluent glyphs
     public const string Shuffle = "", Repeat = "", RepeatOne = "", Checkmark = "", XMark = "", Terminal = "", Question = "";
 
+    // Toast glyphs (checkmark.circle.fill / xmark.circle.fill / exclamationmark.circle.fill) and the deny-with-reason bubble
+    public const string CheckCircle = "", XCircle = "", ExclaimCircle = "", ChatBubble = "", Back = "", Send = "";
+
     public static Path Icon(string data, double size, Brush fill, bool stroke = false, double strokeWidth = 2.2)
     {
         var p = new Path { Data = Geometry.Parse(data), Width = size, Height = size, Stretch = Stretch.Uniform, VerticalAlignment = VerticalAlignment.Center };
